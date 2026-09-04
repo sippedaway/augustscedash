@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CE-dash</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="https://dashboard.oriondrift.net/favicon.png" />
+</head>
+<body>
+    <nav class="page-tabs" aria-label="Main navigation">
+        <div class="page-tab-group" role="tablist" aria-label="Primary navigation">
+            <button type="button" class="page-tab" data-tab="server" role="tab" aria-selected="false">Server</button>
+            <button type="button" class="page-tab active" data-tab="stations" role="tab" aria-selected="true">Stations</button>
+            <button type="button" class="page-tab" data-tab="groups" role="tab" aria-selected="false">Groups</button>
+        </div>
+
+        <div id="account-profile" class="account-profile" aria-label="Logged in user" tabindex="0">
+            <span class="account-avatar-fallback" aria-hidden="true"><i class="fa-brands fa-discord"></i></span>
+            <img id="account-avatar" class="account-avatar hidden" alt="">
+            <span id="account-name" class="account-name"></span>
+            <button id="logout-button" class="logout-button" type="button" aria-label="Log out">Logout</button>
+        </div>
+    </nav>
+
+    <div id="view-server" class="view"></div>
+
+    <div id="view-stations" class="view active">
+        <div class="page-heading">
+            <h1>Select a station</h1>
+            <p class="page-intro">These only include online and joinable stations</p>
+        </div>
+        <div id="station-list" class="grid">
+            <div class="card station-skeleton" aria-hidden="true"><span></span><span></span></div>
+            <div class="card station-skeleton" aria-hidden="true"><span></span><span></span></div>
+            <div class="card station-skeleton" aria-hidden="true"><span></span><span></span></div>
+        </div>
+    </div>
+
+    <div id="view-groups" class="view">
+        <section class="home-groups">
+            <div class="page-heading group-bar">
+                <div>
+                    <h1>Groups</h1>
+                    <p class="page-intro">Don't edit or delete these... please</p>
+                </div>
+                <button class="button create-group-button" onclick="OpenCreateGroupModal()">
+                    <i class="fas fa-plus" aria-hidden="true"></i> Create Group
+                </button>
+            </div>
+            <div id="custom-groups-container" class="home-groups-list"></div>
+        </section>
+    </div>
+
+    <div id="view-station" class="view">
+        <div class="topbar">
+            <button class="button-secondary back-button" type="button" aria-label="Change station" title="Change station" onclick="ShowStations()">
+                <i class="fa-solid fa-arrow-left" aria-hidden="true"></i>
+            </button>
+            <div class="topbar-info">
+                <div>
+                    <span id="station-name-display" class="station-title"></span>
+                </div>
+                <span id="station-region-display" class="badge"></span>
+            </div>
+            <div class="topbar-actions">
+                <button class="button-secondary back-button" type="button" aria-label="Refresh configuration" title="Refresh configuration" onclick="RefreshConfig()">
+                    <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+                </button>
+            </div>
+        </div>
+
+        <div class="content-grid">
+            <div class="controls-panel">
+                <div class="panel-section">
+                    <div class="section-heading">
+                        <div>
+                            <h2>Players</h2>
+                        </div>
+                    </div>
+                    <div class="player-search-container">
+                        <div class="search-input-wrap">
+                            <i class="fa-solid fa-magnifying-glass search-input-icon" aria-hidden="true"></i>
+                            <input type="text" id="player-search-input" class="text-input" placeholder="Search for players or groups...">
+                        </div>
+                        <div id="player-search-results" class="search-results hidden"></div>
+                    </div>
+                    <div id="selected-player-container" class="hidden" style="margin-top: 1rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                            <h3 id="selected-player-name" style="color: var(--primary);"></h3>
+                            <button class="button-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="OpenAddRoleModal()">+ Add Role</button>
+                        </div>
+                        <div id="player-roles-container" class="roles-container"></div>
+                    </div>
+                </div>
+                <div class="panel-section">
+                    <div class="section-heading">
+                        <div>
+                            <h2>Settings</h2>
+                        </div>
+                    </div>
+                    <div id="toggles-container"></div>
+                </div>
+                <div class="panel-section">
+                    <div class="section-heading">
+                        <div>
+                            <h2>Gamemodes</h2>
+                        </div>
+                    </div>
+                    <div id="gamemodes-container"></div>
+                </div>
+                <div class="panel-section">
+                    <div class="section-heading">
+                        <div>
+                            <h2>Gamemode Config</h2>
+                        </div>
+                    </div>
+                    <div id="gamemode-config-container"></div>
+                </div>
+                <div class="panel-section">
+                    <div class="section-heading">
+                        <div>
+                            <h2>Weeklies</h2>
+                        </div>
+                    </div>
+                    <div id="weeklies-container"></div>
+                </div>
+            </div>
+            <div id="layout-divider" class="layout-divider" role="separator" aria-label="Resize settings and config panels" aria-valuemin="30" aria-valuemax="70" aria-valuenow="50" tabindex="0"></div>
+            
+            <div class="right-column">
+                <div class="code-panel">
+                    <div class="code-heading">
+                        <div>
+                            <p class="eyebrow">Read-only</p>
+                            <h2>Config</h2>
+                        </div>
+                    </div>
+                    <pre id="raw-config"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="whitelist-modal" class="modal-backdrop" onclick="HandleModalBackdropClick(event)">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 id="modal-title">Manage Whitelist</h3>
+                <button class="modal-close" onclick="CloseWhitelistModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-groups-container"></div>
+            <div class="modal-footer">
+                <button class="button-secondary" onclick="CloseWhitelistModal()">Cancel</button>
+                <button onclick="SaveWhitelistModal()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="confirm-modal" class="modal-backdrop" onclick="HandleConfirmBackdropClick(event)">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 id="confirm-modal-title">Confirm action</h3>
+                <button class="modal-close" onclick="CloseConfirmModalAction()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="confirm-modal-message">Are you sure?</p>
+            </div>
+            <div class="modal-footer">
+                <button class="button-secondary" onclick="CloseConfirmModalAction()">Cancel</button>
+                <button onclick="ConfirmModalAction()">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="create-group-modal" class="modal-backdrop" onclick="HandleCreateGroupBackdropClick(event)">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Create Group</h3>
+                <button class="modal-close" onclick="CloseCreateGroupModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="text" id="new-group-name" class="text-input" placeholder="Group Name" style="margin-bottom: 1rem;">
+                <div class="player-search-container">
+                    <div class="search-input-wrap">
+                        <i class="fa-solid fa-magnifying-glass search-input-icon" aria-hidden="true"></i>
+                        <input type="text" id="group-player-search" class="text-input" placeholder="Search players to add...">
+                    </div>
+                    <div id="group-player-search-results" class="search-results hidden"></div>
+                </div>
+                <div id="pending-group-players" class="roles-container" style="margin-top: 1rem;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="button-secondary" onclick="CloseCreateGroupModal()">Cancel</button>
+                <button onclick="SaveNewGroup()">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="add-role-modal" class="modal-backdrop" onclick="HandleRoleModalBackdropClick(event)">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Select Role to Add</h3>
+                <button class="modal-close" onclick="CloseAddRoleModal()">&times;</button>
+            </div>
+            <input type="search" id="role-search-input" class="text-input role-search-input" placeholder="Search roles or permissions..." autocomplete="off">
+            <div class="modal-body" id="available-roles-container">
+            </div>
+        </div>
+    </div>
+
+    <div id="edit-group-modal" class="modal-backdrop" onclick="HandleEditGroupBackdropClick(event)">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Edit Group</h3>
+                <button class="modal-close" onclick="CloseEditGroupModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="text" id="edit-group-name" class="text-input" placeholder="Group Name" style="margin-bottom: 1rem;">
+                <div class="player-search-container">
+                    <div class="search-input-wrap">
+                        <i class="fa-solid fa-magnifying-glass search-input-icon" aria-hidden="true"></i>
+                        <input type="text" id="edit-group-player-search" class="text-input" placeholder="Search players to add...">
+                    </div>
+                    <div id="edit-group-player-search-results" class="search-results hidden"></div>
+                </div>
+                <div id="edit-group-players" class="roles-container" style="margin-top: 1rem;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="button-secondary" onclick="CloseEditGroupModal()">Cancel</button>
+                <button onclick="SaveEditedGroup()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="delete-group-modal" class="modal-backdrop" onclick="HandleDeleteGroupBackdropClick(event)">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 style="color: #ff5555;">Delete Group</h3>
+                <button class="modal-close" onclick="CloseDeleteGroupModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete this group?</p>
+                <p style="color: var(--warning); margin-top: 0.5rem; font-size: 0.85rem;">Warning: Deleting a group will not delete any roles added to its players.</p>
+            </div>
+            <div class="modal-footer">
+                <button class="button-secondary" onclick="CloseDeleteGroupModal()">Cancel</button>
+                <button style="background: #ff5555; color: white;" onclick="ExecuteDeleteGroup()">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="weekly-config.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
