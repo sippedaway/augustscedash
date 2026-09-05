@@ -95,7 +95,13 @@ const ALLOWED_EXACT_KEYS = [
 ];
 const ALLOWED_PREFIXES = [
     'loadedgamemodes.tkb_prime.',
-    'loadedgamemodes.zdrift_01.',
+    'loadedgamemodes.tkb_plazawest.',
+    'loadedgamemodes.tkb_plazaeast.',
+    'loadedgamemodes.driftball west 01.',
+    'loadedgamemodes.driftball east 01.',
+    'loadedgamemodes.czg_zdrift_beta.',
+    'loadedgamemodes.czg_zdrift_alpha.',
+    'loadedgamemodes.czg_zdrift_gamma.',
     'loadedgamemodes.driftplexsoccerwestfront.',
     'loadedgamemodes.pkr_ctf_01.'
 ];
@@ -470,6 +476,52 @@ app.get('/api/stations/:id/config', requireAuth, async (req, res) => {
         res.json({ fullConfig, stationConfig });
     } catch (error) {
         sendOrionError(res, 'Fetching station config', error);
+    }
+});
+
+app.get('/api/fleet/config', requireAuth, async (req, res) => {
+    try {
+        const response = await requestApi(`${API_BASE}/v1/fleets/${FLEET_ID}/config`, { headers: getHeaders(req) });
+        const data = await response.json();
+        res.json(data);
+    } catch (error) {
+        sendOrionError(res, 'Fetching fleet config', error);
+    }
+});
+
+app.post('/api/fleet/update', requireAuth, async (req, res) => {
+    try {
+        const { fleetUpdates = {}, fleetDeletes = [] } = req.body;
+        const cleanFleetUpdates = {};
+        for (const [key, value] of Object.entries(fleetUpdates)) {
+            cleanFleetUpdates[key] = typeof value === 'boolean' || typeof value === 'number' ? String(value) : value;
+        }
+        const allKeys = [...Object.keys(cleanFleetUpdates), ...fleetDeletes];
+        for (const key of allKeys) {
+            if (!validateKey(key)) {
+                return res.status(403).json({ error: 'Unauthorized key modification.' });
+            }
+        }
+
+        if (fleetDeletes.length > 0) {
+            await requestApi(`${API_BASE}/v1/fleets/${FLEET_ID}/config`, {
+                method: 'DELETE',
+                headers: getHeaders(req),
+                body: JSON.stringify(fleetDeletes)
+            });
+        }
+
+        if (Object.keys(cleanFleetUpdates).length > 0) {
+            await requestApi(`${API_BASE}/v1/fleets/${FLEET_ID}/config`, {
+                method: 'POST',
+                headers: getHeaders(req),
+                body: JSON.stringify(cleanFleetUpdates)
+            });
+        }
+
+        res.json({ success: true });
+    } catch (error) {
+        sendOrionError(res, 'Updating fleet config', error);
     }
 });
 
