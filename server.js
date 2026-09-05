@@ -53,9 +53,13 @@ const playerSearchLimiter = rateLimit({
 const API_BASE = 'https://api.oriondrift.net';
 const FLEET_ID = '0044c72f-8c2f-41f7-9241-97641e2b8e92';
 const ALLOWED_DISCORD_USER_IDS = [
-    '594014156416483329'
+    '1270801870163546194',
+    '594014156416483329',
+    '1118947966221299722',
+    '792477518233075712',
+    '829444584144633867',
+    '1164092247122391073'
 ];
-
 const ALLOWED_ROLE_PERMISSIONS = new Set([
     'fleet:join',
     'user_kick',
