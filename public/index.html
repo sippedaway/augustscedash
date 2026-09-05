@@ -10,9 +10,10 @@
     <link rel="icon" href="https://dashboard.oriondrift.net/favicon.png" />
 </head>
 <body>
+    <div id="page-loading-bar" class="page-loading-bar" role="status" aria-label="Loading" aria-hidden="true"></div>
     <nav class="page-tabs" aria-label="Main navigation">
         <div class="page-tab-group" role="tablist" aria-label="Primary navigation">
-            <button type="button" class="page-tab" data-tab="server" role="tab" aria-selected="false">Server</button>
+            <button type="button" class="page-tab" data-tab="server" role="tab" aria-selected="false">Fleet</button>
             <button type="button" class="page-tab active" data-tab="stations" role="tab" aria-selected="true">Stations</button>
             <button type="button" class="page-tab" data-tab="groups" role="tab" aria-selected="false">Groups</button>
         </div>
@@ -25,7 +26,43 @@
         </div>
     </nav>
 
-    <div id="view-server" class="view"></div>
+    <div id="view-server" class="view">
+        <section class="server-view">
+            <div class="page-heading">
+                <h1>Fleet</h1>
+                <p class="page-intro">Manage player roles across the fleet</p>
+            </div>
+            <div class="panel-section fleet-settings-panel">
+                <div class="section-heading">
+                    <div>
+                        <h2>Fleet</h2>
+                    </div>
+                </div>
+                <div id="fleet-settings-container"></div>
+            </div>
+            <div class="panel-section server-player-panel">
+                <div class="section-heading">
+                    <div>
+                        <h2>Players</h2>
+                    </div>
+                </div>
+                <div class="player-search-container">
+                    <div class="search-input-wrap">
+                        <i class="fa-solid fa-magnifying-glass search-input-icon" aria-hidden="true"></i>
+                        <input type="text" id="player-search-input" class="text-input" placeholder="Search for players or groups...">
+                    </div>
+                    <div id="player-search-results" class="search-results hidden"></div>
+                </div>
+                <div id="selected-player-container" class="hidden" style="margin-top: 1.5rem;">
+                    <div class="selected-player-heading">
+                        <h3 id="selected-player-name"></h3>
+                        <button class="button-secondary" onclick="OpenAddRoleModal()">+ Add Role</button>
+                    </div>
+                    <div id="player-roles-container" class="player-roles-sections"></div>
+                </div>
+            </div>
+        </section>
+    </div>
 
     <div id="view-stations" class="view active">
         <div class="page-heading">
@@ -66,7 +103,7 @@
                 <span id="station-region-display" class="badge"></span>
             </div>
             <div class="topbar-actions">
-                <button class="button-secondary back-button" type="button" aria-label="Refresh configuration" title="Refresh configuration" onclick="RefreshConfig()">
+                <button class="button-secondary back-button" type="button" aria-label="Refresh" title="Refresh" onclick="RefreshConfig()">
                     <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
                 </button>
             </div>
@@ -74,27 +111,6 @@
 
         <div class="content-grid">
             <div class="controls-panel">
-                <div class="panel-section">
-                    <div class="section-heading">
-                        <div>
-                            <h2>Players</h2>
-                        </div>
-                    </div>
-                    <div class="player-search-container">
-                        <div class="search-input-wrap">
-                            <i class="fa-solid fa-magnifying-glass search-input-icon" aria-hidden="true"></i>
-                            <input type="text" id="player-search-input" class="text-input" placeholder="Search for players or groups...">
-                        </div>
-                        <div id="player-search-results" class="search-results hidden"></div>
-                    </div>
-                    <div id="selected-player-container" class="hidden" style="margin-top: 1rem;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                            <h3 id="selected-player-name" style="color: var(--primary);"></h3>
-                            <button class="button-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="OpenAddRoleModal()">+ Add Role</button>
-                        </div>
-                        <div id="player-roles-container" class="roles-container"></div>
-                    </div>
-                </div>
                 <div class="panel-section">
                     <div class="section-heading">
                         <div>
@@ -145,12 +161,29 @@
     </div>
 
     <div id="whitelist-modal" class="modal-backdrop" onclick="HandleModalBackdropClick(event)">
-        <div class="modal-card">
+        <div class="modal-card whitelist-modal-card">
             <div class="modal-header">
                 <h3 id="modal-title">Manage Whitelist</h3>
                 <button class="modal-close" onclick="CloseWhitelistModal()">&times;</button>
             </div>
-            <div class="modal-body" id="modal-groups-container"></div>
+            <div class="whitelist-modal-body">
+                <div class="whitelist-left-panel">
+                    <h4>Groups</h4>
+                    <div id="modal-groups-container"></div>
+                    <div class="whitelist-manual-search">
+                        <h4>Add player</h4>
+                        <div class="search-input-wrap">
+                            <i class="fa-solid fa-magnifying-glass search-input-icon" aria-hidden="true"></i>
+                            <input type="search" id="whitelist-player-search" class="text-input" placeholder="Search players..." autocomplete="off">
+                        </div>
+                        <div id="whitelist-player-search-results" class="search-results hidden"></div>
+                    </div>
+                </div>
+                <div class="whitelist-right-panel">
+                    <h4>Players in whitelist</h4>
+                    <div id="whitelist-selected-players" class="whitelist-players-list"></div>
+                </div>
+            </div>
             <div class="modal-footer">
                 <button class="button-secondary" onclick="CloseWhitelistModal()">Cancel</button>
                 <button onclick="SaveWhitelistModal()">Save</button>
@@ -247,6 +280,34 @@
             <div class="modal-footer">
                 <button class="button-secondary" onclick="CloseDeleteGroupModal()">Cancel</button>
                 <button style="background: #ff5555; color: white;" onclick="ExecuteDeleteGroup()">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="role-remove-modal" class="modal-backdrop" onclick="HandleRoleRemoveBackdropClick(event)">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Remove role</h3>
+                <button class="modal-close" onclick="CloseRoleRemoveModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="role-remove-message">Remove this role from the selected players?</p>
+            </div>
+            <div class="modal-footer">
+                <button class="button-secondary" onclick="CloseRoleRemoveModal()">Cancel</button>
+                <button class="danger-button" onclick="ConfirmRoleRemove()">Remove role</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="role-info-modal" class="modal-backdrop" onclick="HandleRoleInfoBackdropClick(event)">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 id="role-info-title">Role permissions</h3>
+                <button class="modal-close" onclick="CloseRoleInfoModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <ul id="role-info-permissions" class="role-info-permissions"></ul>
             </div>
         </div>
     </div>

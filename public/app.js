@@ -2,6 +2,7 @@ let CurrentStationId = null;
 let CurrentFullConfig = {};
 let CurrentStationConfig = {};
 let CurrentStationConfigKeys = [];
+let CurrentFleetConfig = {};
 let ActiveWhitelistKey = null;
 let PendingRequests = 0;
 let WeeklySelectorState = { type: 'race', district: 'pink-draft', weeklyId: null };
@@ -72,8 +73,10 @@ const Gamemodes = {
 };
 
 function SetRequestState(IsLoading) {
-    let Topbar = document.querySelector('.topbar');
-    if (Topbar) Topbar.classList.toggle('is-loading', IsLoading);
+    let LoadingBar = document.getElementById('page-loading-bar');
+    if (!LoadingBar) return;
+    LoadingBar.classList.toggle('active', IsLoading);
+    LoadingBar.setAttribute('aria-hidden', String(!IsLoading));
 }
 
 function BeginRequest() {
@@ -152,6 +155,7 @@ async function Init() {
 }
 
 let SearchTimeout;
+const PlayerSearchDelay = 180;
 let AllFleetRoles = [];
 
 async function FetchFleetRoles() {
@@ -477,7 +481,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 } finally {
                     EndRequest();
                 }
-            }, 500);
+            }, PlayerSearchDelay);
         });
     }
     
@@ -513,7 +517,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ResultsContainer.appendChild(Div);
                 }
                 ResultsContainer.classList.remove('hidden');
-            }, 500);
+            }, PlayerSearchDelay);
         });
     }
 
@@ -549,7 +553,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ResultsContainer.appendChild(Div);
                 }
                 ResultsContainer.classList.remove('hidden');
-            }, 500);
+            }, PlayerSearchDelay);
         });
     }
 
@@ -562,6 +566,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 let ActiveRoleTargets = [];
+let PendingRoleRemoval = null;
 
 async function SelectPlayer(Id, Username) {
     ActiveRoleTargets = [{ id: Id, username: Username }];
@@ -591,53 +596,114 @@ async function LoadPlayerRoles() {
             let Data = await Res.json();
             if (Data.roles) {
                 Data.roles.forEach(R => {
-                    if (!RoleMap.has(R.role_id)) RoleMap.set(R.role_id, R);
+                    if (!RoleMap.has(R.role_id)) {
+                        RoleMap.set(R.role_id, { role: R, owners: [] });
+                    }
+                    RoleMap.get(R.role_id).owners.push(Target.username);
                 });
             }
             await Delay(200);
         }
-        
-        let Container = document.getElementById('player-roles-container');
-        Container.innerHTML = '';
-        
-        if (RoleMap.size > 0) {
-            RoleMap.forEach(Role => {
-                let Tag = document.createElement('div');
-                Tag.className = 'role-tag';
-                
-                let NameSpan = document.createElement('span');
-                NameSpan.textContent = Role.role_name;
-                
-                let RemoveBtn = document.createElement('button');
-                RemoveBtn.className = 'role-remove';
-                RemoveBtn.innerHTML = '&times;';
-                RemoveBtn.onclick = function(E) {
-                    E.stopPropagation();
-                    if (confirm('Remove role ' + Role.role_name + ' from all selected?')) {
-                        RemovePlayerRole(Role.role_id);
-                    }
-                };
 
-                let Tooltip = document.createElement('div');
-                Tooltip.className = 'tooltip-text';
-                let Permissions = Array.isArray(Role.permissions) ? Role.permissions : [];
-                let VisiblePermissions = Permissions.slice(0, 5);
-                if (Permissions.length > 5) {
-                    VisiblePermissions.push('+' + (Permissions.length - 5) + ' more...');
-                }
-                Tooltip.textContent = VisiblePermissions.join('\n') || 'No permissions assigned.';
-                
-                Tag.appendChild(NameSpan);
-                Tag.appendChild(RemoveBtn);
-                Tag.appendChild(Tooltip);
-                Container.appendChild(Tag);
-            });
-        } else {
-            Container.textContent = 'No roles assigned.';
-        }
+        RenderPlayerRoles(RoleMap);
     } finally {
         EndRequest();
     }
+}
+
+function CreatePlayerRoleTag(RoleData, ShowOwners) {
+    let Tag = document.createElement('div');
+    Tag.className = 'role-tag player-role-tag';
+
+    let RoleContent = document.createElement('div');
+    RoleContent.className = 'player-role-content';
+    let NameSpan = document.createElement('strong');
+    NameSpan.textContent = RoleData.role.role_name;
+    RoleContent.appendChild(NameSpan);
+
+    if (ShowOwners) {
+        let Owners = document.createElement('span');
+        Owners.className = 'role-owners';
+        Owners.textContent = RoleData.owners.join(', ');
+        RoleContent.appendChild(Owners);
+    }
+
+    let RoleActions = document.createElement('div');
+    RoleActions.className = 'role-actions';
+
+    let InfoBtn = document.createElement('button');
+    InfoBtn.className = 'role-info';
+    InfoBtn.type = 'button';
+    InfoBtn.title = `View ${RoleData.role.role_name} permissions`;
+    InfoBtn.setAttribute('aria-label', `View ${RoleData.role.role_name} permissions`);
+    InfoBtn.innerHTML = '<i class="fa-solid fa-circle-info" aria-hidden="true"></i>';
+    InfoBtn.onclick = function(Event) {
+        Event.stopPropagation();
+        OpenRoleInfoModal(RoleData.role.role_name, RoleData.role.permissions);
+    };
+
+    let RemoveBtn = document.createElement('button');
+    RemoveBtn.className = 'role-remove';
+    RemoveBtn.type = 'button';
+    RemoveBtn.setAttribute('aria-label', `Remove ${RoleData.role.role_name}`);
+    RemoveBtn.innerHTML = '&times;';
+    RemoveBtn.onclick = function(Event) {
+        Event.stopPropagation();
+        OpenRoleRemoveModal(RoleData.role.role_id, RoleData.role.role_name);
+    };
+
+    let Tooltip = document.createElement('div');
+    Tooltip.className = 'tooltip-text';
+    let Permissions = Array.isArray(RoleData.role.permissions) ? RoleData.role.permissions : [];
+    let VisiblePermissions = Permissions.slice(0, 5);
+    if (Permissions.length > 5) VisiblePermissions.push('+' + (Permissions.length - 5) + ' more...');
+    Tooltip.textContent = VisiblePermissions.join('\n') || 'No permissions assigned.';
+
+    RoleActions.append(InfoBtn, RemoveBtn);
+    Tag.append(RoleContent, RoleActions, Tooltip);
+    return Tag;
+}
+
+function RenderPlayerRoles(RoleMap) {
+    let Container = document.getElementById('player-roles-container');
+    Container.innerHTML = '';
+
+    let IsGroup = ActiveRoleTargets.length > 1;
+    let SharedRoles = [...RoleMap.values()].filter(RoleData => RoleData.owners.length === ActiveRoleTargets.length);
+    let ExclusiveRoles = [...RoleMap.values()].filter(RoleData => RoleData.owners.length < ActiveRoleTargets.length);
+
+    if (RoleMap.size === 0) {
+        Container.textContent = 'No roles assigned.';
+        return;
+    }
+
+    let Sections = IsGroup ? [
+        { title: 'Shared roles', roles: SharedRoles, showOwners: false, empty: 'No roles shared by everyone.' },
+        { title: 'Exclusive roles', roles: ExclusiveRoles, showOwners: true, empty: 'No exclusive roles.' }
+    ] : [
+        { title: 'Roles', roles: SharedRoles, showOwners: false, empty: 'No roles assigned.' }
+    ];
+
+    Sections.forEach(Section => {
+        let SectionElement = document.createElement('section');
+        SectionElement.className = 'player-role-section';
+        let Heading = document.createElement('h4');
+        Heading.textContent = Section.title;
+        SectionElement.appendChild(Heading);
+
+        let RoleList = document.createElement('div');
+        RoleList.className = 'roles-container';
+        if (Section.roles.length === 0) {
+            let Empty = document.createElement('p');
+            Empty.className = 'role-empty';
+            Empty.textContent = Section.empty;
+            RoleList.appendChild(Empty);
+        } else {
+            Section.roles.forEach(RoleData => RoleList.appendChild(CreatePlayerRoleTag(RoleData, Section.showOwners)));
+        }
+        SectionElement.appendChild(RoleList);
+        Container.appendChild(SectionElement);
+    });
 }
 
 function OpenAddRoleModal() {
@@ -719,19 +785,93 @@ async function FetchWithRetry(Url, Options = {}, MaxRetries = 3) {
     return fetch(Url, Options);
 }
 
+function CreateRoleUpdateProgress(Action) {
+    let ProgressNode = document.createElement('div');
+    ProgressNode.className = 'role-update-progress';
+    ProgressNode.innerHTML = `
+        <div class="role-update-progress-header">
+            <strong class="role-update-action">${Action}</strong>
+            <span class="role-update-count"></span>
+        </div>
+        <div class="role-update-current"></div>
+    `;
+    return ProgressNode;
+}
+
+function UpdateRoleUpdateProgress(ProgressNode, Action, Index, Total, Username) {
+    ProgressNode.querySelector('.role-update-action').textContent = Action;
+    ProgressNode.querySelector('.role-update-count').textContent = `${Index} of ${Total}`;
+    ProgressNode.querySelector('.role-update-current').textContent = Username;
+}
+
+function OpenRoleRemoveModal(RoleId, RoleName) {
+    PendingRoleRemoval = RoleId;
+    document.getElementById('role-remove-message').textContent = `Remove ${RoleName} from the selected players?`;
+    document.getElementById('role-remove-modal').classList.add('active');
+}
+
+function CloseRoleRemoveModal() {
+    document.getElementById('role-remove-modal').classList.remove('active');
+    PendingRoleRemoval = null;
+}
+
+function HandleRoleRemoveBackdropClick(Event) {
+    if (Event.target && Event.target.id === 'role-remove-modal') {
+        CloseRoleRemoveModal();
+    }
+}
+
+function OpenRoleInfoModal(RoleName, Permissions) {
+    let PermissionsContainer = document.getElementById('role-info-permissions');
+    PermissionsContainer.innerHTML = '';
+    let PermissionList = Array.isArray(Permissions) ? Permissions : [];
+
+    if (PermissionList.length === 0) {
+        let Empty = document.createElement('p');
+        Empty.className = 'role-empty';
+        Empty.textContent = 'No permissions assigned.';
+        PermissionsContainer.appendChild(Empty);
+    } else {
+        PermissionList.forEach(PermissionName => {
+            let Permission = document.createElement('li');
+            Permission.textContent = PermissionName;
+            PermissionsContainer.appendChild(Permission);
+        });
+    }
+
+    document.getElementById('role-info-title').textContent = `${RoleName} permissions`;
+    document.getElementById('role-info-modal').classList.add('active');
+}
+
+function CloseRoleInfoModal() {
+    document.getElementById('role-info-modal').classList.remove('active');
+}
+
+function HandleRoleInfoBackdropClick(Event) {
+    if (Event.target && Event.target.id === 'role-info-modal') {
+        CloseRoleInfoModal();
+    }
+}
+
+async function ConfirmRoleRemove() {
+    if (!PendingRoleRemoval) return;
+    let RoleId = PendingRoleRemoval;
+    CloseRoleRemoveModal();
+    await RemovePlayerRole(RoleId);
+}
+
 async function RemovePlayerRole(RoleId) {
     BeginRequest();
     
     let Container = document.getElementById('player-roles-container');
-    let ProgressNode = document.createElement('div');
-    ProgressNode.style.cssText = 'margin-bottom: 1rem; font-weight: bold; color: var(--primary);';
+    let ProgressNode = CreateRoleUpdateProgress('Removing role');
     Container.prepend(ProgressNode);
 
     try {
         let errors = [];
         for (let i = 0; i < ActiveRoleTargets.length; i++) {
             let Target = ActiveRoleTargets[i];
-            ProgressNode.textContent = `Removing role: ${i + 1} / ${ActiveRoleTargets.length} (${Target.username})`;
+            UpdateRoleUpdateProgress(ProgressNode, 'Removing role', i + 1, ActiveRoleTargets.length, Target.username);
             
             let Res = await FetchWithRetry(`/api/players/${Target.id}/roles/${RoleId}`, { method: 'DELETE' });
             
@@ -757,15 +897,14 @@ async function AddPlayerRole(RoleId) {
     BeginRequest();
     
     let Container = document.getElementById('player-roles-container');
-    let ProgressNode = document.createElement('div');
-    ProgressNode.style.cssText = 'margin-bottom: 1rem; font-weight: bold; color: var(--primary);';
+    let ProgressNode = CreateRoleUpdateProgress('Assigning role');
     Container.prepend(ProgressNode);
 
     try {
         let errors = [];
         for (let i = 0; i < ActiveRoleTargets.length; i++) {
             let Target = ActiveRoleTargets[i];
-            ProgressNode.textContent = `Assigning role: ${i + 1} / ${ActiveRoleTargets.length} (${Target.username})`;
+            UpdateRoleUpdateProgress(ProgressNode, 'Assigning role', i + 1, ActiveRoleTargets.length, Target.username);
             
             let Res = await FetchWithRetry(`/api/players/${Target.id}/roles/${RoleId}`, { method: 'POST' });
             
@@ -786,6 +925,74 @@ async function AddPlayerRole(RoleId) {
     }
 }
 
+async function RefreshFleetConfig() {
+    BeginRequest();
+    try {
+        let Res = await fetch('/api/fleet/config');
+        let Data = await Res.json();
+        if (!Res.ok) throw new Error(Data.error || 'Failed to fetch fleet config');
+        CurrentFleetConfig = Data;
+        RenderFleetSettings();
+    } catch (Error) {
+        console.error('Fleet config load failed:', Error);
+        alert(Error.message || 'Failed to fetch fleet config');
+    } finally {
+        EndRequest();
+    }
+}
+
+function RenderFleetSettings() {
+    let Container = document.getElementById('fleet-settings-container');
+    if (!Container) return;
+
+    let IsAllowlistOnly = Object.prototype.hasOwnProperty.call(CurrentFleetConfig, 'is_whitelist')
+        ? CurrentFleetConfig.is_whitelist === true || CurrentFleetConfig.is_whitelist === 'true'
+        : true;
+
+    Container.innerHTML = `
+        <div class="control-row">
+            <span>Allowlist-only Fleet</span>
+            <label class="switch">
+                <input type="checkbox" id="fleet-allowlist-toggle" ${IsAllowlistOnly ? 'checked' : ''}>
+                <span class="slider"></span>
+            </label>
+        </div>
+    `;
+
+    Container.querySelector('#fleet-allowlist-toggle').addEventListener('change', (Event) => {
+        let NewValue = Event.target.checked;
+        if (!NewValue) {
+            OpenConfirmModal('Disable fleet whitelist?', 'Only do this if you want players to join Creator Events. This will turn off the fleet being allowlist-only (whitelist-only). Continue?', async () => {
+                await UpdateFleetAllowlist(false);
+            });
+            Event.target.checked = true;
+            return;
+        }
+        UpdateFleetAllowlist(true);
+    });
+}
+
+async function UpdateFleetAllowlist(NewValue) {
+    BeginRequest();
+    try {
+        let Res = await fetch('/api/fleet/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fleetUpdates: { is_whitelist: NewValue } })
+        });
+        let Data = await Res.json().catch(() => ({}));
+        if (!Res.ok) throw new Error(Data.error || `Failed to save fleet config (${Res.status})`);
+        CurrentFleetConfig.is_whitelist = NewValue;
+        RenderFleetSettings();
+    } catch (Error) {
+        console.error('Fleet config save failed:', Error);
+        alert(Error.message || 'Failed to save fleet config');
+        RenderFleetSettings();
+    } finally {
+        EndRequest();
+    }
+}
+
 async function SelectStation(Id, Name, Region) {
     CurrentStationId = Id;
     document.getElementById('station-name-display').textContent = Name;
@@ -800,6 +1007,10 @@ function SetMainTab(TabName) {
     const StationDetailView = document.getElementById('view-station');
     const GroupsView = document.getElementById('view-groups');
     const ServerView = document.getElementById('view-server');
+
+    if (TabName === 'server') {
+        RefreshFleetConfig();
+    }
 
     document.querySelectorAll('.page-tab').forEach((TabButton) => {
         const IsActive = TabButton.dataset.tab === TabName;
@@ -961,12 +1172,13 @@ function RenderRawConfig() {
 
 function RenderControls() {
     let TogglesContainer = document.getElementById('toggles-container');
+    let OpenStates = [...TogglesContainer.querySelectorAll('.settings-group')].map(GroupDetails => GroupDetails.open);
     TogglesContainer.innerHTML = '';
 
     SettingsGroups.forEach((Group, Index) => {
         let GroupDetails = document.createElement('details');
         GroupDetails.className = 'settings-group';
-        GroupDetails.open = Group.defaultOpen || Index === 0;
+        GroupDetails.open = OpenStates[Index] ?? (Group.defaultOpen || Index === 0);
 
         let Summary = document.createElement('summary');
         Summary.innerHTML = `<span>${Group.title}</span>`;
@@ -1493,6 +1705,7 @@ function RenderGamemodeConfig() {
             title: "Driftball Prime",
             toggles: [
                 { label: "Kick Losing Team", key: "loadedgamemodes.tkb_prime.modulestate.dashboardconfigoverrides.bkicklosingteam", default: true },
+                { label: "Allow Restarts", key: "loadedgamemodes.tkb_prime.modulestate.dashboardconfigoverrides.ballowrestarts", default: true },
                 { label: "Closed Team VOIP", key: "loadedgamemodes.tkb_prime.modulestate.dashboardconfigoverrides.buseclosedteamvoip", default: false },
                 { label: "Whitelist Team 0", key: "loadedgamemodes.tkb_prime.modulestate.dashboardconfigoverrides.buseteam0whitelist", default: false, whitelistKey: "loadedgamemodes.tkb_prime.modulestate.dashboardconfigoverrides.team0whitelist", whitelistTitle: "Manage Team 0 Whitelist" },
                 { label: "Whitelist Team 1", key: "loadedgamemodes.tkb_prime.modulestate.dashboardconfigoverrides.buseteam1whitelist", default: false, whitelistKey: "loadedgamemodes.tkb_prime.modulestate.dashboardconfigoverrides.team1whitelist", whitelistTitle: "Manage Team 1 Whitelist" }
@@ -1503,14 +1716,92 @@ function RenderGamemodeConfig() {
             ]
         },
         {
-            title: "Z-Drift Left",
+            title: "Driftball Plaza West",
             toggles: [
-                { label: "Kick Losing Team", key: "loadedgamemodes.zdrift_01.modulestate.dashboardconfigoverrides.bkicklosingteam", default: true },
-                { label: "Use Whitelist", key: "loadedgamemodes.zdrift_01.modulestate.dashboardconfigoverrides.busewhitelist", default: false, customWhitelist: true }
+                { label: "Kick Losing Team", key: "loadedgamemodes.tkb_plazawest.modulestate.dashboardconfigoverrides.bkicklosingteam", default: true },
+                { label: "Allow Restarts", key: "loadedgamemodes.tkb_plazawest.modulestate.dashboardconfigoverrides.ballowrestarts", default: true },
+                { label: "Closed Team VOIP", key: "loadedgamemodes.tkb_plazawest.modulestate.dashboardconfigoverrides.buseclosedteamvoip", default: false },
+                { label: "Whitelist Team 0", key: "loadedgamemodes.tkb_plazawest.modulestate.dashboardconfigoverrides.buseteam0whitelist", default: false, whitelistKey: "loadedgamemodes.tkb_plazawest.modulestate.dashboardconfigoverrides.team0whitelist", whitelistTitle: "Manage Team 0 Whitelist" },
+                { label: "Whitelist Team 1", key: "loadedgamemodes.tkb_plazawest.modulestate.dashboardconfigoverrides.buseteam1whitelist", default: false, whitelistKey: "loadedgamemodes.tkb_plazawest.modulestate.dashboardconfigoverrides.team1whitelist", whitelistTitle: "Manage Team 1 Whitelist" }
             ],
             numbers: [
-                { label: "Max Team 0 Size", key: "loadedgamemodes.zdrift_01.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.0", default: 4 },
-                { label: "Max Team 1 Size", key: "loadedgamemodes.zdrift_01.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 4 }
+                { label: "Max Team 0 Size", key: "loadedgamemodes.tkb_plazawest.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.0", default: 3 },
+                { label: "Max Team 1 Size", key: "loadedgamemodes.tkb_plazawest.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 3 }
+            ]
+        },
+        {
+            title: "Driftball Plaza East",
+            toggles: [
+                { label: "Kick Losing Team", key: "loadedgamemodes.tkb_plazaeast.modulestate.dashboardconfigoverrides.bkicklosingteam", default: true },
+                { label: "Allow Restarts", key: "loadedgamemodes.tkb_plazaeast.modulestate.dashboardconfigoverrides.ballowrestarts", default: true },
+                { label: "Closed Team VOIP", key: "loadedgamemodes.tkb_plazaeast.modulestate.dashboardconfigoverrides.buseclosedteamvoip", default: false },
+                { label: "Whitelist Team 0", key: "loadedgamemodes.tkb_plazaeast.modulestate.dashboardconfigoverrides.buseteam0whitelist", default: false, whitelistKey: "loadedgamemodes.tkb_plazaeast.modulestate.dashboardconfigoverrides.team0whitelist", whitelistTitle: "Manage Team 0 Whitelist" },
+                { label: "Whitelist Team 1", key: "loadedgamemodes.tkb_plazaeast.modulestate.dashboardconfigoverrides.buseteam1whitelist", default: false, whitelistKey: "loadedgamemodes.tkb_plazaeast.modulestate.dashboardconfigoverrides.team1whitelist", whitelistTitle: "Manage Team 1 Whitelist" }
+            ],
+            numbers: [
+                { label: "Max Team 0 Size", key: "loadedgamemodes.tkb_plazaeast.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.0", default: 3 },
+                { label: "Max Team 1 Size", key: "loadedgamemodes.tkb_plazaeast.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 3 }
+            ]
+        },
+        {
+            title: "Driftball 4v4 West Front",
+            toggles: [
+                { label: "Kick Losing Team", key: "loadedgamemodes.driftball west 01.modulestate.dashboardconfigoverrides.bkicklosingteam", default: true },
+                { label: "Allow Restarts", key: "loadedgamemodes.driftball west 01.modulestate.dashboardconfigoverrides.ballowrestarts", default: true },
+                { label: "Closed Team VOIP", key: "loadedgamemodes.driftball west 01.modulestate.dashboardconfigoverrides.buseclosedteamvoip", default: false },
+                { label: "Whitelist Team 0", key: "loadedgamemodes.driftball west 01.modulestate.dashboardconfigoverrides.buseteam0whitelist", default: false, whitelistKey: "loadedgamemodes.driftball west 01.modulestate.dashboardconfigoverrides.team0whitelist", whitelistTitle: "Manage Team 0 Whitelist" },
+                { label: "Whitelist Team 1", key: "loadedgamemodes.driftball west 01.modulestate.dashboardconfigoverrides.buseteam1whitelist", default: false, whitelistKey: "loadedgamemodes.driftball west 01.modulestate.dashboardconfigoverrides.team1whitelist", whitelistTitle: "Manage Team 1 Whitelist" }
+            ],
+            numbers: [
+                { label: "Max Team 0 Size", key: "loadedgamemodes.driftball west 01.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.0", default: 4 },
+                { label: "Max Team 1 Size", key: "loadedgamemodes.driftball west 01.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 4 }
+            ]
+        },
+        {
+            title: "Driftball 4v4 East Front",
+            toggles: [
+                { label: "Kick Losing Team", key: "loadedgamemodes.driftball east 01.modulestate.dashboardconfigoverrides.bkicklosingteam", default: true },
+                { label: "Allow Restarts", key: "loadedgamemodes.driftball east 01.modulestate.dashboardconfigoverrides.ballowrestarts", default: true },
+                { label: "Closed Team VOIP", key: "loadedgamemodes.driftball east 01.modulestate.dashboardconfigoverrides.buseclosedteamvoip", default: false },
+                { label: "Whitelist Team 0", key: "loadedgamemodes.driftball east 01.modulestate.dashboardconfigoverrides.buseteam0whitelist", default: false, whitelistKey: "loadedgamemodes.driftball east 01.modulestate.dashboardconfigoverrides.team0whitelist", whitelistTitle: "Manage Team 0 Whitelist" },
+                { label: "Whitelist Team 1", key: "loadedgamemodes.driftball east 01.modulestate.dashboardconfigoverrides.buseteam1whitelist", default: false, whitelistKey: "loadedgamemodes.driftball east 01.modulestate.dashboardconfigoverrides.team1whitelist", whitelistTitle: "Manage Team 1 Whitelist" }
+            ],
+            numbers: [
+                { label: "Max Team 0 Size", key: "loadedgamemodes.driftball east 01.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.0", default: 4 },
+                { label: "Max Team 1 Size", key: "loadedgamemodes.driftball east 01.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 4 }
+            ]
+        },
+        {
+            title: "Z-Drift Beta (Front)",
+            toggles: [
+                { label: "Kick Losing Team", key: "loadedgamemodes.czg_zdrift_beta.modulestate.dashboardconfigoverrides.bkicklosingteam", default: true },
+                { label: "Use Whitelist", key: "loadedgamemodes.czg_zdrift_beta.modulestate.dashboardconfigoverrides.busewhitelist", default: false, customWhitelist: true, moduleId: "czg_zdrift_beta" }
+            ],
+            numbers: [
+                { label: "Max Team 0 Size", key: "loadedgamemodes.czg_zdrift_beta.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.0", default: 4 },
+                { label: "Max Team 1 Size", key: "loadedgamemodes.czg_zdrift_beta.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 4 }
+            ]
+        },
+        {
+            title: "Z-Drift Alpha",
+            toggles: [
+                { label: "Kick Losing Team", key: "loadedgamemodes.czg_zdrift_alpha.modulestate.dashboardconfigoverrides.bkicklosingteam", default: true },
+                { label: "Use Whitelist", key: "loadedgamemodes.czg_zdrift_alpha.modulestate.dashboardconfigoverrides.busewhitelist", default: false, customWhitelist: true, moduleId: "czg_zdrift_alpha" }
+            ],
+            numbers: [
+                { label: "Max Team 0 Size", key: "loadedgamemodes.czg_zdrift_alpha.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.0", default: 4 },
+                { label: "Max Team 1 Size", key: "loadedgamemodes.czg_zdrift_alpha.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 4 }
+            ]
+        },
+        {
+            title: "Z-Drift Gamma",
+            toggles: [
+                { label: "Kick Losing Team", key: "loadedgamemodes.czg_zdrift_gamma.modulestate.dashboardconfigoverrides.bkicklosingteam", default: true },
+                { label: "Use Whitelist", key: "loadedgamemodes.czg_zdrift_gamma.modulestate.dashboardconfigoverrides.busewhitelist", default: false, customWhitelist: true, moduleId: "czg_zdrift_gamma" }
+            ],
+            numbers: [
+                { label: "Max Team 0 Size", key: "loadedgamemodes.czg_zdrift_gamma.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.0", default: 4 },
+                { label: "Max Team 1 Size", key: "loadedgamemodes.czg_zdrift_gamma.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 4 }
             ]
         },
         {
@@ -1572,9 +1863,10 @@ function RenderGamemodeConfig() {
             if (Val && Tog.whitelistKey) {
                 BtnHtml = `<button class="button-secondary whitelist-btn" onclick="OpenWhitelistModal('${Tog.whitelistKey}', '${Tog.whitelistTitle}')">Manage whitelist</button>`;
             } else if (Val && Tog.customWhitelist) {
+                const WhitelistPrefix = `loadedgamemodes.${Tog.moduleId}.modulestate.dashboardconfigoverrides`;
                 BtnHtml = `
-                    <button class="button-secondary whitelist-btn" onclick="OpenWhitelistModal('loadedgamemodes.zdrift_01.modulestate.dashboardconfigoverrides.team0whitelist', 'Manage Team 0 whitelist')">Manage Team 0 whitelist</button>
-                    <button class="button-secondary whitelist-btn" onclick="OpenWhitelistModal('loadedgamemodes.zdrift_01.modulestate.dashboardconfigoverrides.team1whitelist', 'Manage Team 1 whitelist')">Manage Team 1 whitelist</button>
+                    <button class="button-secondary whitelist-btn" onclick="OpenWhitelistModal('${WhitelistPrefix}.team0whitelist', 'Manage Team 0 whitelist')">Manage Team 0 whitelist</button>
+                    <button class="button-secondary whitelist-btn" onclick="OpenWhitelistModal('${WhitelistPrefix}.team1whitelist', 'Manage Team 1 whitelist')">Manage Team 1 whitelist</button>
                 `;
             }
 
@@ -1644,7 +1936,9 @@ function OpenWhitelistModal(Key, Title) {
     let CurrentPlayers = CurrentVal.split(',').map(S => S.trim()).filter(Boolean);
     
     WhitelistSelectedPlayers = [...CurrentPlayers];
-    WhitelistSelectedGroups = [];
+    WhitelistSelectedGroups = CustomGroups
+        .filter(Group => Group.players.length > 0 && Group.players.every(Player => CurrentPlayers.includes(Player.username)))
+        .map(Group => Group.id);
     
     RenderWhitelistGroups();
     RenderWhitelistSelectedPlayers();
@@ -1735,6 +2029,7 @@ async function SearchWhitelistPlayers(Query) {
         let Data = await Res.json();
         
         Results.innerHTML = '';
+        let ResultCount = 0;
         if (Data.items && Data.items.length > 0) {
             Data.items.forEach(Player => {
                 if (!WhitelistSelectedPlayers.includes(Player.username)) {
@@ -1744,12 +2039,11 @@ async function SearchWhitelistPlayers(Query) {
                     Div.style.cssText = 'padding: 0.5rem 0.75rem; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 0.85rem;';
                     Div.onclick = () => AddWhitelistPlayer(Player.username);
                     Results.appendChild(Div);
+                    ResultCount += 1;
                 }
             });
-            Results.classList.remove('hidden');
-        } else {
-            Results.classList.add('hidden');
         }
+        Results.classList.toggle('hidden', ResultCount === 0);
     } catch (e) {
         Results.classList.add('hidden');
     }

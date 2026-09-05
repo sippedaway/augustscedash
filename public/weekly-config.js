@@ -76,6 +76,20 @@ const SpawnLocationOptions = [
             'config.spawnPointSettings.overriddenSpawnRotationYaw': 90,
             'config.spawnPointSettings.overriddenSpawnRotationRoll': 210
         }
+    },
+    {
+        id: 'august-recording-spot',
+        label: "August's recording spot",
+        override: true,
+        stationConfig: {
+            'config.spawnPointSettings.overrideSpawnPoint': true,
+            'config.spawnPointSettings.overriddenSpawnLocationX': 1286.377,
+            'config.spawnPointSettings.overriddenSpawnLocationY': 14854.028,
+            'config.spawnPointSettings.overriddenSpawnLocationZ': -26832.500,
+            'config.spawnPointSettings.overriddenSpawnRotationPitch': 0,
+            'config.spawnPointSettings.overriddenSpawnRotationYaw': 2.971,
+            'config.spawnPointSettings.overriddenSpawnRotationRoll': 111.554
+        }
     }
 ];
 
