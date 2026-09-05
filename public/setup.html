@@ -84,6 +84,9 @@
             document.getElementById('step-1').classList.remove('active');
             document.getElementById('step-2').classList.add('active');
         }
+        if (urlParams.get('error') === 'unauthorized') {
+            alert('You are not authorized to use this website.');
+        }
 
         async function submitApiKey() {
             const key = document.getElementById('api-key-input').value.trim();

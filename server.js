@@ -52,6 +52,9 @@ const playerSearchLimiter = rateLimit({
 
 const API_BASE = 'https://api.oriondrift.net';
 const FLEET_ID = '0044c72f-8c2f-41f7-9241-97641e2b8e92';
+const ALLOWED_DISCORD_USER_IDS = [
+    '594014156416483329'
+];
 
 const ALLOWED_ROLE_PERMISSIONS = new Set([
     'fleet:join',
@@ -243,6 +246,11 @@ app.get('/api/auth/callback', oauthLimiter, async (req, res) => {
         const userRes = await axios.get('https://discord.com/api/users/@me', {
             headers: { Authorization: `Bearer ${tokenRes.data.access_token}` }
         });
+
+        if (!ALLOWED_DISCORD_USER_IDS.includes(userRes.data.id)) {
+            res.clearCookie('oauth_state', getCookieOptions(req));
+            return res.redirect('/setup.html?error=unauthorized');
+        }
 
         const token = jwt.sign({ 
             id: userRes.data.id, 
