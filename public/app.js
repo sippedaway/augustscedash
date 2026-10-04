@@ -38,13 +38,14 @@ const SettingsGroups = [
         title: 'Station',
         items: [
             { label: 'Is whitelist', key: 'is_whitelist', type: 'boolean', default: true, confirmFalse: true },
+            { label: 'Fireworks', key: 'config.visualEffects.fireworksOn', type: 'boolean', default: false },
             { label: 'Default Spawn', key: 'config.spawnPointSettings.overrideSpawnPoint', type: 'spawn', default: false }
         ]
     },
     {
         title: 'Teams',
         items: [
-            { label: 'Tackle everyone', key: 'config.player.tackleEnemyTeamOnly', type: 'boolean', default: true, invert: true },
+            { label: 'Disable Team Tackle', key: 'config.player.tackleEnemyTeamOnly', type: 'boolean', default: true },
             { label: 'Grab enemies', key: 'config.player.enableEnemyPlayerGrab', type: 'boolean', default: true }
         ]
     }
@@ -131,21 +132,21 @@ async function Init() {
 
         TargetStations.forEach(Station => {
             var Card = document.createElement('div');
-            Card.className = 'card';
+            Card.className = 'card station-card';
             var StationTitle = document.createElement('h3');
-            StationTitle.textContent = Station.station_name;
-            var RegionBadge = document.createElement('span');
-            RegionBadge.className = 'badge';
-            RegionBadge.style.marginTop = '10px';
-            RegionBadge.style.display = 'inline-block';
-            RegionBadge.textContent = Station.region;
-            var PlayersBadge = document.createElement('span');
-            PlayersBadge.className = 'badge';
-            PlayersBadge.style.marginTop = '10px';
-            PlayersBadge.style.display = 'inline-block';
-            PlayersBadge.style.marginLeft = '10px';
-            PlayersBadge.textContent = `${Station.player_count} players`;
-            Card.append(StationTitle, RegionBadge, PlayersBadge);
+            StationTitle.className = 'station-region-title';
+            StationTitle.textContent = Station.region === 'eu-central-1'
+                ? 'EU'
+                : Station.region === 'us-east-2'
+                    ? 'NA'
+                    : Station.region;
+            var StationName = document.createElement('div');
+            StationName.className = 'station-card-name';
+            StationName.textContent = Station.station_name;
+            var StationDetails = document.createElement('div');
+            StationDetails.className = 'station-card-details';
+            StationDetails.textContent = `${Station.player_count} players · Version ${Station.version}`;
+            Card.append(StationTitle, StationName, StationDetails);
             Card.onclick = () => SelectStation(Station.station_id, Station.station_name, Station.region);
             Container.appendChild(Card);
         });
@@ -156,7 +157,9 @@ async function Init() {
 
 let SearchTimeout;
 const PlayerSearchDelay = 180;
+const BulkPlayerSearchDelay = 700;
 let AllFleetRoles = [];
+let PlayerLookupGeneration = 0;
 
 async function FetchFleetRoles() {
     if (AllFleetRoles.length > 0) return;
@@ -433,11 +436,22 @@ document.addEventListener('DOMContentLoaded', () => {
     if (SearchInput) {
         SearchInput.addEventListener('input', function(E) {
             clearTimeout(SearchTimeout);
+            const LookupGeneration = ++PlayerLookupGeneration;
             let Query = E.target.value.trim();
             let ResultsContainer = document.getElementById('player-search-results');
             
             if (Query.length === 0) {
                 ResultsContainer.classList.add('hidden');
+                return;
+            }
+
+            if (Query.includes(',')) {
+                const Usernames = Query.split(',').map(Username => Username.trim()).filter(Boolean);
+                if (Usernames.length < 2) {
+                    ResultsContainer.classList.add('hidden');
+                    return;
+                }
+                SearchTimeout = setTimeout(() => ResolveCommaSeparatedPlayers(Usernames, LookupGeneration), BulkPlayerSearchDelay);
                 return;
             }
 
@@ -482,6 +496,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     EndRequest();
                 }
             }, PlayerSearchDelay);
+        });
+
+        SearchInput.addEventListener('keydown', Event => {
+            if (Event.key !== 'Enter' || !SearchInput.value.includes(',')) return;
+            const Usernames = SearchInput.value.split(',').map(Username => Username.trim()).filter(Boolean);
+            if (Usernames.length < 2) return;
+            Event.preventDefault();
+            clearTimeout(SearchTimeout);
+            ResolveCommaSeparatedPlayers(Usernames, ++PlayerLookupGeneration);
         });
     }
     
@@ -568,22 +591,94 @@ document.addEventListener('DOMContentLoaded', () => {
 let ActiveRoleTargets = [];
 let PendingRoleRemoval = null;
 
+function SetPlayerLookupStatus(Container, Message, State = 'loading') {
+    Container.innerHTML = '';
+    const Status = document.createElement('div');
+    Status.className = 'player-lookup-status';
+    Status.dataset.state = State;
+
+    const Indicator = document.createElement('span');
+    Indicator.className = State === 'loading' ? 'player-lookup-spinner' : 'player-lookup-status-icon';
+    Indicator.setAttribute('aria-hidden', 'true');
+    if (State !== 'loading') Indicator.textContent = 'i';
+
+    const Text = document.createElement('span');
+    Text.textContent = Message;
+    Status.append(Indicator, Text);
+    Container.appendChild(Status);
+}
+
+async function ResolveCommaSeparatedPlayers(Usernames, LookupGeneration) {
+    const ResultsContainer = document.getElementById('player-search-results');
+    const Players = [];
+    const FoundIds = new Set();
+    const MissingUsernames = [];
+
+    SetPlayerLookupStatus(ResultsContainer, `Looking up ${Usernames.length} players one by one...`);
+    ResultsContainer.classList.remove('hidden');
+    BeginRequest();
+    try {
+        for (let Index = 0; Index < Usernames.length; Index++) {
+            if (LookupGeneration !== PlayerLookupGeneration) return;
+            const Username = Usernames[Index];
+            SetPlayerLookupStatus(ResultsContainer, `Looking up player ${Index + 1} of ${Usernames.length}: ${Username}`);
+
+            try {
+                const Res = await fetch('/api/players/search?q=' + encodeURIComponent(Username));
+                const Data = await Res.json();
+                const Match = (Data.items || []).find(Player =>
+                    String(Player.username || '').toLowerCase() === Username.toLowerCase()
+                );
+
+                if (Match) {
+                    if (!FoundIds.has(Match.user_id)) {
+                        FoundIds.add(Match.user_id);
+                        Players.push({ id: Match.user_id, username: Match.username });
+                    }
+                } else {
+                    MissingUsernames.push(Username);
+                }
+            } catch (Error) {
+                MissingUsernames.push(Username);
+                console.error(`Player lookup failed for ${Username}:`, Error);
+            }
+
+            if (Index < Usernames.length - 1) await Delay(1100);
+        }
+
+        if (LookupGeneration !== PlayerLookupGeneration) return;
+        if (Players.length === 0) {
+            SetPlayerLookupStatus(ResultsContainer, 'No matching players found. Check the usernames and try again.', 'empty');
+            ResultsContainer.classList.remove('hidden');
+            return;
+        }
+
+        const MissingSummary = MissingUsernames.length
+            ? `; ${MissingUsernames.length} not found: ${MissingUsernames.slice(0, 5).join(', ')}${MissingUsernames.length > 5 ? ', …' : ''}`
+            : '';
+        SelectPlayers(Players, `${Players.length} players${MissingUsernames.length ? ` (${MissingUsernames.length} not found)` : ''}`);
+        document.getElementById('selected-player-name').title = MissingSummary ? `Not found${MissingSummary}` : '';
+    } finally {
+        EndRequest();
+    }
+}
+
 async function SelectPlayer(Id, Username) {
-    ActiveRoleTargets = [{ id: Id, username: Username }];
+    await SelectPlayers([{ id: Id, username: Username }], Username);
+}
+
+async function SelectPlayers(Players, DisplayName) {
+    PlayerLookupGeneration += 1;
+    ActiveRoleTargets = [...Players];
     document.getElementById('player-search-results').classList.add('hidden');
     document.getElementById('player-search-input').value = '';
-    document.getElementById('selected-player-name').textContent = Username;
+    document.getElementById('selected-player-name').textContent = DisplayName;
     document.getElementById('selected-player-container').classList.remove('hidden');
     await LoadPlayerRoles();
 }
 
 async function SelectGroup(Group) {
-    ActiveRoleTargets = [...Group.players];
-    document.getElementById('player-search-results').classList.add('hidden');
-    document.getElementById('player-search-input').value = '';
-    document.getElementById('selected-player-name').textContent = Group.label + " (Group)";
-    document.getElementById('selected-player-container').classList.remove('hidden');
-    await LoadPlayerRoles();
+    await SelectPlayers(Group.players, Group.label + " (Group)");
 }
 
 async function LoadPlayerRoles() {
@@ -1262,7 +1357,7 @@ function CreateGamemodeRow(GmData, IsLoaded, ToggleFn) {
             let NeedsFix = 
                 GetBooleanSettingValue({ key: "config.player.enableThrusters", default: true }) ||
                 GetBooleanSettingValue({ key: "config.player.enableHeartBall", default: true }) ||
-                GetBooleanSettingValue({ key: "config.player.tackleEnemyTeamOnly", default: false }) ||
+                !GetBooleanSettingValue({ key: "config.player.tackleEnemyTeamOnly", default: false }) ||
                 !GetBooleanSettingValue({ key: "config.player.enableEnemyPlayerGrab", default: true });
                 
             if (NeedsFix) {
@@ -1490,7 +1585,7 @@ async function SendUpdate(Payload) {
 
 async function UpdateSetting(Key, NewValue) {
     let StationUpdates = {
-        [Key]: Key === "config.player.tackleEnemyTeamOnly" ? !NewValue : NewValue
+        [Key]: NewValue
     };
     let StationDeletes = [];
     let FleetDeletes = [];
@@ -2335,12 +2430,32 @@ async function FixSm() {
 }
 
 function Logout() {
-    // Clear all cookies
     document.cookie.split(";").forEach(function(c) {
         document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
     });
-    // Redirect to setup
     window.location.href = '/setup.html';
+}
+
+const AvailableThemes = ['lime', 'ocean', 'violet', 'sunset'];
+const ThemeStorageKey = 'ce-dash-theme';
+
+function ApplyTheme(Theme, Save = false) {
+    let SelectedTheme = AvailableThemes.includes(Theme) ? Theme : 'lime';
+    document.documentElement.dataset.theme = SelectedTheme;
+    document.querySelectorAll('[data-theme-choice]').forEach(Option => {
+        Option.setAttribute('aria-pressed', String(Option.dataset.themeChoice === SelectedTheme));
+    });
+    if (Save) {
+        try {
+            localStorage.setItem(ThemeStorageKey, SelectedTheme);
+        } catch (E) {}
+    }
+}
+
+try {
+    ApplyTheme(localStorage.getItem(ThemeStorageKey) || 'lime');
+} catch (E) {
+    ApplyTheme('lime');
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -2349,6 +2464,34 @@ document.addEventListener('DOMContentLoaded', () => {
         LogoutButton.addEventListener('click', (Event) => {
             Event.stopPropagation();
             Logout();
+        });
+    }
+
+    let ThemeModal = document.getElementById('theme-picker-modal');
+    let ThemeOpenButton = document.getElementById('theme-picker-open');
+    let ThemeCloseButton = document.getElementById('theme-picker-close');
+
+    const CloseThemePicker = () => {
+        ThemeModal.classList.remove('active');
+        ThemeModal.setAttribute('aria-hidden', 'true');
+        ThemeOpenButton.focus();
+    };
+
+    if (ThemeModal && ThemeOpenButton && ThemeCloseButton) {
+        ThemeOpenButton.addEventListener('click', () => {
+            ThemeModal.classList.add('active');
+            ThemeModal.setAttribute('aria-hidden', 'false');
+            ThemeCloseButton.focus();
+        });
+        ThemeCloseButton.addEventListener('click', CloseThemePicker);
+        ThemeModal.addEventListener('click', Event => {
+            if (Event.target === ThemeModal) CloseThemePicker();
+        });
+        ThemeModal.querySelectorAll('[data-theme-choice]').forEach(Option => {
+            Option.addEventListener('click', () => ApplyTheme(Option.dataset.themeChoice, true));
+        });
+        document.addEventListener('keydown', Event => {
+            if (Event.key === 'Escape' && ThemeModal.classList.contains('active')) CloseThemePicker();
         });
     }
 });

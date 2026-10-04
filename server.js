@@ -52,6 +52,14 @@ const playerSearchLimiter = rateLimit({
 
 const API_BASE = 'https://api.oriondrift.net';
 const FLEET_ID = '0044c72f-8c2f-41f7-9241-97641e2b8e92';
+const ALLOWED_DISCORD_USER_IDS = [
+    '1270801870163546194',
+    '594014156416483329',
+    '1118947966221299722',
+    '792477518233075712',
+    '829444584144633867',
+    '1164092247122391073'
+];
 
 const ALLOWED_ROLE_PERMISSIONS = new Set([
     'fleet:join',
@@ -74,6 +82,7 @@ const ALLOWED_EXACT_KEYS = [
     'config.player.enableHeartBall',
     'config.player.tackleEnemyTeamOnly',
     'config.player.enableEnemyPlayerGrab',
+    'config.visualEffects.fireworksOn',
     'config.gateKeeperVolumes.circuitLoungeLocked',
     'config.gateKeeperVolumes.driftplexLocked',
     'config.gateKeeperVolumes.complexLocked',
@@ -243,6 +252,11 @@ app.get('/api/auth/callback', oauthLimiter, async (req, res) => {
         const userRes = await axios.get('https://discord.com/api/users/@me', {
             headers: { Authorization: `Bearer ${tokenRes.data.access_token}` }
         });
+
+        if (!ALLOWED_DISCORD_USER_IDS.includes(userRes.data.id)) {
+            res.clearCookie('oauth_state', getCookieOptions(req));
+            return res.redirect('/setup.html?error=unauthorized');
+        }
 
         const token = jwt.sign({ 
             id: userRes.data.id, 

@@ -8,6 +8,20 @@ const SpawnLocationOptions = [
         }
     },
     {
+        id: 'zero-g-district',
+        label: 'Zero-G District',
+        override: true,
+        stationConfig: {
+            'config.spawnPointSettings.overrideSpawnPoint': true,
+            'config.spawnPointSettings.overriddenSpawnLocationX': 6605.905,
+            'config.spawnPointSettings.overriddenSpawnLocationY': 7965.859,
+            'config.spawnPointSettings.overriddenSpawnLocationZ': 3823.065,
+            'config.spawnPointSettings.overriddenSpawnRotationPitch': 0,
+            'config.spawnPointSettings.overriddenSpawnRotationYaw': 0,
+            'config.spawnPointSettings.overriddenSpawnRotationRoll': 90
+        }
+    },
+    {
         id: 'driftball-district',
         label: 'Driftball District',
         override: true,

@@ -18,11 +18,16 @@
             <button type="button" class="page-tab" data-tab="groups" role="tab" aria-selected="false">Groups</button>
         </div>
 
-        <div id="account-profile" class="account-profile" aria-label="Logged in user" tabindex="0">
-            <span class="account-avatar-fallback" aria-hidden="true"><i class="fa-brands fa-discord"></i></span>
-            <img id="account-avatar" class="account-avatar hidden" alt="">
-            <span id="account-name" class="account-name"></span>
+        <div class="account-controls">
+            <button id="theme-picker-open" class="theme-picker-trigger button-secondary" type="button" aria-haspopup="dialog" aria-controls="theme-picker-modal">
+                <i class="fa-solid fa-palette" aria-hidden="true"></i><span>Theme</span>
+            </button>
             <button id="logout-button" class="logout-button" type="button" aria-label="Log out">Logout</button>
+            <div id="account-profile" class="account-profile" aria-label="Logged in user">
+                <span class="account-avatar-fallback" aria-hidden="true"><i class="fa-brands fa-discord"></i></span>
+                <img id="account-avatar" class="account-avatar hidden" alt="">
+                <span id="account-name" class="account-name"></span>
+            </div>
         </div>
     </nav>
 
@@ -49,7 +54,7 @@
                 <div class="player-search-container">
                     <div class="search-input-wrap">
                         <i class="fa-solid fa-magnifying-glass search-input-icon" aria-hidden="true"></i>
-                        <input type="text" id="player-search-input" class="text-input" placeholder="Search for players or groups...">
+                        <input type="text" id="player-search-input" class="text-input" placeholder="Search a player, group, or many players separated by comma" aria-describedby="player-search-hint">
                     </div>
                     <div id="player-search-results" class="search-results hidden"></div>
                 </div>
@@ -310,6 +315,39 @@
                 <ul id="role-info-permissions" class="role-info-permissions"></ul>
             </div>
         </div>
+    </div>
+
+    <div id="theme-picker-modal" class="modal-backdrop" aria-hidden="true">
+        <section class="modal-card theme-picker-card" role="dialog" aria-modal="true" aria-labelledby="theme-picker-title">
+            <div class="modal-header">
+                <div>
+                    <h3 id="theme-picker-title">Choose a theme</h3>
+                </div>
+                <button id="theme-picker-close" class="modal-close" type="button" aria-label="Close theme picker">&times;</button>
+            </div>
+            <div class="theme-options" role="group" aria-label="Color themes">
+                <button class="theme-option" type="button" data-theme-choice="lime" aria-pressed="true">
+                    <span class="theme-option-swatches lime-swatches" aria-hidden="true"><i></i><i></i><i></i></span>
+                    <span class="theme-option-copy"><strong>Lime</strong><small>Default</small></span>
+                    <i class="fa-solid fa-check theme-option-check" aria-hidden="true"></i>
+                </button>
+                <button class="theme-option" type="button" data-theme-choice="ocean" aria-pressed="false">
+                    <span class="theme-option-swatches ocean-swatches" aria-hidden="true"><i></i><i></i><i></i></span>
+                    <span class="theme-option-copy"><strong>Binary Blue</strong></span>
+                    <i class="fa-solid fa-check theme-option-check" aria-hidden="true"></i>
+                </button>
+                <button class="theme-option" type="button" data-theme-choice="violet" aria-pressed="false">
+                    <span class="theme-option-swatches violet-swatches" aria-hidden="true"><i></i><i></i><i></i></span>
+                    <span class="theme-option-copy"><strong>Proxy Purple</strong></span>
+                    <i class="fa-solid fa-check theme-option-check" aria-hidden="true"></i>
+                </button>
+                <button class="theme-option" type="button" data-theme-choice="sunset" aria-pressed="false">
+                    <span class="theme-option-swatches sunset-swatches" aria-hidden="true"><i></i><i></i><i></i></span>
+                    <span class="theme-option-copy"><strong>Yottabyte Yellow</strong></span>
+                    <i class="fa-solid fa-check theme-option-check" aria-hidden="true"></i>
+                </button>
+            </div>
+        </section>
     </div>
 
     <script src="weekly-config.js"></script>
