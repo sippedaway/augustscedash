@@ -63,13 +63,6 @@ const Gamemodes = {
         label: "King of the Hill",
         key: "CustomGamemodes.0800_Full_1",
         value: "1;c;g;7C812A104B7FCD4F949A0BAA79C146F2;;Community_Map_1_KoTH"
-    },
-    Sm: {
-        label: "Sharks and Minnows",
-        key: "CustomGamemodes.0800_Full_1",
-        value: "1;c;g;14C540EC4ABE82AEB55F58881FB13C04;;^0.1.4",
-        reqKey: "loadedgamemodes.0800_Full_1.modulestate.dashboardconfigoverrides.Admins",
-        reqVal: "higuysimaugust"
     }
 };
 
@@ -100,20 +93,6 @@ async function Init() {
             return;
         }
         let AuthData = await AuthRes.json();
-        let AccountName = document.getElementById('account-name');
-        let AccountAvatar = document.getElementById('account-avatar');
-        let AccountAvatarFallback = document.querySelector('.account-avatar-fallback');
-        AccountName.textContent = AuthData.username || 'Discord user';
-        if (AuthData.id && AuthData.avatar) {
-            AccountAvatar.src = `https://cdn.discordapp.com/avatars/${encodeURIComponent(AuthData.id)}/${encodeURIComponent(AuthData.avatar)}.png?size=64`;
-            AccountAvatar.alt = `${AuthData.username || 'Discord user'} avatar`;
-            AccountAvatar.addEventListener('error', () => {
-                AccountAvatar.classList.add('hidden');
-                AccountAvatarFallback.classList.remove('hidden');
-            }, { once: true });
-            AccountAvatar.classList.remove('hidden');
-            AccountAvatarFallback.classList.add('hidden');
-        }
         var Res = await fetch('/api/stations');
         var Data = await Res.json();
 
@@ -1330,11 +1309,9 @@ function RenderControls() {
 
     let IsTagLoaded = CurrentFullConfig[Gamemodes.Tag.key] === Gamemodes.Tag.value;
     let IsKothLoaded = CurrentFullConfig[Gamemodes.Koth.key] === Gamemodes.Koth.value;
-    let IsSmLoaded = CurrentFullConfig[Gamemodes.Sm.key] === Gamemodes.Sm.value;
 
     GmContainer.appendChild(CreateGamemodeRow(Gamemodes.Tag, IsTagLoaded, () => ToggleTag(!IsTagLoaded)));
     GmContainer.appendChild(CreateGamemodeRow(Gamemodes.Koth, IsKothLoaded, () => ToggleKoth(!IsKothLoaded)));
-    GmContainer.appendChild(CreateGamemodeRow(Gamemodes.Sm, IsSmLoaded, () => ToggleSm(!IsSmLoaded)));
 
     RenderGamemodeConfig();
     RenderWeeklySelector();
@@ -1349,9 +1326,6 @@ function CreateGamemodeRow(GmData, IsLoaded, ToggleFn) {
     if (IsLoaded) {
         if (GmData === Gamemodes.Tag) {
             FixBtnHtml += `<button class="fix-btn" onclick="OpenWhitelistModal('${GmData.reqKey}', 'Manage Assistants')">Manage assistants</button>`;
-        }
-        if (GmData === Gamemodes.Sm && CurrentFullConfig[GmData.reqKey] !== GmData.reqVal) {
-            FixBtnHtml = `<button class="fix-btn" onclick="FixSm()">Fix Admins</button>`;
         }
         if (GmData === Gamemodes.Koth) {
             let NeedsFix = 
@@ -2399,32 +2373,6 @@ async function FixKoth() {
         "config.player.enableHeartBall": false,
         "config.player.tackleEnemyTeamOnly": true,
         "config.player.enableEnemyPlayerGrab": false
-    };
-    await SendUpdate({ StationUpdates: StationUpdates });
-}
-
-async function ToggleSm(Enable) {
-    let StationUpdates = {};
-    let StationDeletes = [];
-    let FleetDeletes = [];
-    
-    if (Enable) {
-        StationUpdates[Gamemodes.Sm.key] = Gamemodes.Sm.value;
-        StationUpdates[Gamemodes.Sm.reqKey] = Gamemodes.Sm.reqVal;
-        
-        RouteDelete(Gamemodes.Sm.key, StationDeletes, FleetDeletes);
-        RouteDelete(Gamemodes.Sm.reqKey, StationDeletes, FleetDeletes);
-    } else {
-        RouteDelete(Gamemodes.Sm.key, StationDeletes, FleetDeletes);
-        RouteDelete(Gamemodes.Sm.reqKey, StationDeletes, FleetDeletes);
-    }
-    
-    await SendUpdate({ StationUpdates: StationUpdates, StationDeletes: StationDeletes, FleetDeletes: FleetDeletes });
-}
-
-async function FixSm() {
-    let StationUpdates = {
-        [Gamemodes.Sm.reqKey]: Gamemodes.Sm.reqVal
     };
     await SendUpdate({ StationUpdates: StationUpdates });
 }

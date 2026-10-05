@@ -2,20 +2,14 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 const cookieParser = require('cookie-parser');
-const jwt = require('jsonwebtoken');
-const axios = require('axios');
 const crypto = require('crypto');
 const { rateLimit } = require('express-rate-limit');
 const { validateSpawnPointUpdate } = require('./public/weekly-config');
 
-const requiredEnvironmentVariables = [
-    'JWT_SECRET',
-    'DISCORD_CLIENT_ID',
-    'DISCORD_CLIENT_SECRET',
-    'DISCORD_REDIRECT_URI',
-    'DATABASE_URL'
-];
+const requiredEnvironmentVariables = ['DATABASE_URL'];
+const sessionSecret = process.env.SESSION_SECRET || process.env.JWT_SECRET;
 const missingEnvironmentVariables = requiredEnvironmentVariables.filter(name => !process.env[name]);
+if (!sessionSecret) missingEnvironmentVariables.unshift('SESSION_SECRET');
 if (missingEnvironmentVariables.length > 0) {
     throw new Error(`Missing required environment variables: ${missingEnvironmentVariables.join(', ')}`);
 }
@@ -37,7 +31,7 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser());
 
-const oauthLimiter = rateLimit({
+const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 20,
     standardHeaders: 'draft-8',
@@ -52,14 +46,6 @@ const playerSearchLimiter = rateLimit({
 
 const API_BASE = 'https://api.oriondrift.net';
 const FLEET_ID = '0044c72f-8c2f-41f7-9241-97641e2b8e92';
-const ALLOWED_DISCORD_USER_IDS = [
-    '1270801870163546194',
-    '594014156416483329',
-    '1118947966221299722',
-    '792477518233075712',
-    '829444584144633867',
-    '1164092247122391073'
-];
 
 const ALLOWED_ROLE_PERMISSIONS = new Set([
     'fleet:join',
@@ -99,8 +85,7 @@ const ALLOWED_EXACT_KEYS = [
     'CustomGamemodes.0300_Full_1',
     'CustomGamemodes.0800_Full_1',
     'CustomGamemodes.1200_Full_1',
-    'loadedgamemodes.PKR_Scrapun_Demo_Full_1.modulestate.dashboardconfigoverrides.Assistants',
-    'loadedgamemodes.0800_Full_1.modulestate.dashboardconfigoverrides.Admins'
+    'loadedgamemodes.PKR_Scrapun_Demo_Full_1.modulestate.dashboardconfigoverrides.Assistants'
 ];
 const ALLOWED_PREFIXES = [
     'loadedgamemodes.tkb_prime.',
@@ -138,13 +123,13 @@ const pool = new Pool({
 const sessionTableReady = pool.query(`
     CREATE TABLE IF NOT EXISTS auth_sessions (
         session_id TEXT PRIMARY KEY,
-        discord_id TEXT NOT NULL,
         username TEXT NOT NULL,
-        avatar TEXT,
         encrypted_api_key TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         expires_at TIMESTAMPTZ NOT NULL
     );
+    ALTER TABLE auth_sessions DROP COLUMN IF EXISTS discord_id;
+    ALTER TABLE auth_sessions DROP COLUMN IF EXISTS avatar;
     CREATE TABLE IF NOT EXISTS odgroups (
         id BIGSERIAL PRIMARY KEY,
         name TEXT NOT NULL,
@@ -152,7 +137,7 @@ const sessionTableReady = pool.query(`
     )
 `);
 
-const encryptionKey = crypto.createHash('sha256').update(process.env.JWT_SECRET).digest();
+const encryptionKey = crypto.createHash('sha256').update(sessionSecret).digest();
 
 function getHeaders(req) {
     if (!req.user?.dashApiKey) {
@@ -181,24 +166,6 @@ function getCookieOptions(req) {
     return { httpOnly: true, secure: req.secure || process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/' };
 }
 
-function signOAuthState(state) {
-    const signature = crypto.createHmac('sha256', process.env.JWT_SECRET).update(state).digest('base64url');
-    return `${state}.${signature}`;
-}
-
-function verifyOAuthState(signedState) {
-    if (typeof signedState !== 'string') return false;
-    const separator = signedState.lastIndexOf('.');
-    if (separator <= 0) return false;
-
-    const state = signedState.slice(0, separator);
-    const signature = signedState.slice(separator + 1);
-    const expected = crypto.createHmac('sha256', process.env.JWT_SECRET).update(state).digest('base64url');
-    const actualBuffer = Buffer.from(signature);
-    const expectedBuffer = Buffer.from(expected);
-    return actualBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
-}
-
 function encryptApiKey(apiKey) {
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv('aes-256-gcm', encryptionKey, iv);
@@ -217,13 +184,6 @@ function decryptApiKey(value) {
     ]).toString('utf8');
 }
 
-app.get('/api/auth/discord', oauthLimiter, (req, res) => {
-    const state = crypto.randomBytes(32).toString('base64url');
-    res.cookie('oauth_state', signOAuthState(state), { ...getCookieOptions(req), maxAge: 10 * 60 * 1000 });
-    const url = `https://discord.com/api/oauth2/authorize?client_id=${process.env.DISCORD_CLIENT_ID}&redirect_uri=${encodeURIComponent(process.env.DISCORD_REDIRECT_URI)}&response_type=code&scope=identify&state=${encodeURIComponent(state)}`;
-    res.redirect(url);
-});
-
 app.get('/setup.html', (req, res) => {
     res.sendFile(require('path').join(__dirname, 'public', 'setup.html'));
 });
@@ -232,76 +192,34 @@ app.get('/style.css', (req, res) => {
     res.sendFile(require('path').join(__dirname, 'public', 'style.css'));
 });
 
-app.get('/api/auth/callback', oauthLimiter, async (req, res) => {
-    const { code, state } = req.query;
-    try {
-        const signedState = req.cookies.oauth_state;
-        if (!state || !verifyOAuthState(signedState) || signedState.slice(0, signedState.lastIndexOf('.')) !== state) {
-            throw new Error('Invalid OAuth state');
-        }
-
-        const tokenParams = new URLSearchParams({
-            client_id: process.env.DISCORD_CLIENT_ID,
-            client_secret: process.env.DISCORD_CLIENT_SECRET,
-            grant_type: 'authorization_code',
-            code,
-            redirect_uri: process.env.DISCORD_REDIRECT_URI,
-        });
-        const tokenRes = await axios.post('https://discord.com/api/oauth2/token', tokenParams);
-        
-        const userRes = await axios.get('https://discord.com/api/users/@me', {
-            headers: { Authorization: `Bearer ${tokenRes.data.access_token}` }
-        });
-
-        if (!ALLOWED_DISCORD_USER_IDS.includes(userRes.data.id)) {
-            res.clearCookie('oauth_state', getCookieOptions(req));
-            return res.redirect('/setup.html?error=unauthorized');
-        }
-
-        const token = jwt.sign({ 
-            id: userRes.data.id, 
-            username: userRes.data.username, 
-            avatar: userRes.data.avatar 
-        }, process.env.JWT_SECRET, { expiresIn: '7d' });
-
-        res.clearCookie('oauth_state', getCookieOptions(req));
-        res.cookie('setup_token', token, getCookieOptions(req));
-        res.redirect('/setup.html?step=2');
-    } catch (error) {
-        res.redirect('/setup.html?error=oauth_failed');
-        console.error('Discord OAuth callback failed:', error.response?.data || error.message);
-    }
-});
-
-app.post('/api/auth/finalize', oauthLimiter, (req, res) => {
-    const setupToken = req.cookies.setup_token;
+app.post('/api/auth/finalize', loginLimiter, async (req, res) => {
     const dashApiKey = typeof req.body.dashApiKey === 'string' ? normalizeApiKey(req.body.dashApiKey) : '';
 
-    if (!setupToken) return res.status(401).json({ error: 'Setup session cookie is missing' });
     if (!dashApiKey) return res.status(400).json({ error: 'Missing API key' });
 
     try {
-        const decoded = jwt.verify(setupToken, process.env.JWT_SECRET);
-        const { exp, iat, nbf, ...setupClaims } = decoded;
+        const validationResponse = await requestApi(`${API_BASE}/v1/fleets/${FLEET_ID}`, {
+            headers: { 'x-api-key': dashApiKey, 'Content-Type': 'application/json' }
+        });
+        await validationResponse.arrayBuffer();
 
         const sessionId = crypto.randomBytes(32).toString('base64url');
         const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-        sessionTableReady.then(() => pool.query(
+        await sessionTableReady;
+        await pool.query(
             `INSERT INTO auth_sessions
-                (session_id, discord_id, username, avatar, encrypted_api_key, expires_at)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [sessionId, setupClaims.id, setupClaims.username, setupClaims.avatar || null, encryptApiKey(dashApiKey), expiresAt]
-        )).then(() => {
-            res.cookie('auth_token', sessionId, getCookieOptions(req));
-            res.clearCookie('setup_token', getCookieOptions(req));
-            res.json({ success: true });
-        }).catch(err => {
-            console.error('Auth session creation failed:', err.message);
-            res.status(500).json({ error: 'Failed to create authenticated session' });
-        });
+                (session_id, username, encrypted_api_key, expires_at)
+             VALUES ($1, $2, $3, $4)`,
+            [sessionId, 'Orion Drift user', encryptApiKey(dashApiKey), expiresAt]
+        );
+        res.cookie('auth_token', sessionId, getCookieOptions(req));
+        res.json({ success: true });
     } catch (err) {
-        console.error('Setup session validation failed:', err.message);
-        res.status(401).json({ error: 'Invalid setup session', details: err.message });
+        if (err.status && err.status < 500) {
+            return res.status(401).json({ error: 'Uhm bad API key. Or it doesn\'t have Creator Events access. Remake it or try again?' });
+        }
+        console.error('Auth session creation failed:', err.message);
+        res.status(500).json({ error: 'Failed to validate API key or create authenticated session' });
     }
 });
 
@@ -320,7 +238,7 @@ async function requireAuth(req, res, next) {
 async function getSessionUser(sessionId) {
     await sessionTableReady;
     const result = await pool.query(
-        `SELECT discord_id, username, avatar, encrypted_api_key
+        `SELECT username, encrypted_api_key
          FROM auth_sessions
          WHERE session_id = $1 AND expires_at > NOW()`,
         [sessionId]
@@ -329,15 +247,13 @@ async function getSessionUser(sessionId) {
 
     const session = result.rows[0];
     return {
-        id: session.discord_id,
         username: session.username,
-        avatar: session.avatar,
         dashApiKey: decryptApiKey(session.encrypted_api_key)
     };
 }
 
 app.get('/api/me', requireAuth, (req, res) => {
-    res.json({ id: req.user.id, username: req.user.username, avatar: req.user.avatar });
+    res.json({ username: req.user.username });
 });
 
 app.get('/', async (req, res, next) => {

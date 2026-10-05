@@ -12,99 +12,111 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            min-height: 80vh;
+            min-height: 100vh;
+            padding: 2rem;
         }
         .setup-card {
-            background: linear-gradient(145deg, var(--surface-raised), var(--surface));
-            border: 1px solid var(--border);
-            border-radius: 8px;
+            display: grid;
+            grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+            align-items: center;
+            gap: 3rem;
             padding: 3rem;
             width: 100%;
-            max-width: 460px;
-            text-align: center;
-            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+            max-width: 1100px;
         }
-        .setup-step {
-            display: none;
-        }
-        .setup-step.active {
+        .setup-card h2 { margin-bottom: 0.75rem; }
+        .setup-copy { min-width: 0; }
+        .api-key-guide {
             display: block;
-            animation: fadeIn 0.4s ease;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        .discord-btn {
-            background: #5865F2; 
-            color: white;
             width: 100%;
-            padding: 0.8rem;
-            font-size: 1rem;
+            max-height: 560px;
+            object-fit: contain;
+            margin: 0;
+        }
+        .setup-guide-panel {
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 0.75rem;
-            margin-top: 2rem;
+            min-width: 0;
         }
-        .discord-btn:hover { filter: brightness(1.15); }
+        .setup-error {
+            min-height: 1.4em;
+            margin: 0 0 0.75rem;
+            color: #ff8b8b;
+            font-size: 0.9rem;
+        }
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+        @media (max-width: 720px) {
+            .setup-container { min-height: 100vh; padding: 1rem; }
+            .setup-card {
+                grid-template-columns: 1fr;
+                gap: 1.75rem;
+                padding: 1.5rem;
+            }
+            .api-key-guide { max-height: 360px; }
+        }
     </style>
 </head>
 <body>
     <div class="setup-container">
         <div class="setup-card">
-            
-            <div id="step-1" class="setup-step active">
-                <p class="eyebrow">step 1</p>
-                <h2>Better CE Dashboard</h2>
-                <p class="page-intro">To verify yourself you gotta use Discord</p>
-                <button class="discord-btn" onclick="window.location.href='/api/auth/discord'">
-                    <i class="fa-brands fa-discord"></i> Sign in with Discord
-                </button>
-            </div>
+            <section class="setup-copy">
+                <h2>Orion Drift API Key</h2>
+                <p class="page-intro">Put in your OD Dash API key. Now it's purely to verify you have access to Creator Events. The repo is COMPLETELY open-source and you can check whether it's safe if you have trust issues ;)<br><br>Note: do NOT share this website! It's ONLY for Creators with CE access; NOT for your event staff.</p>
 
-            <div id="step-2" class="setup-step">
-                <p class="eyebrow">Step 2</p>
-                <h2>OD Dashboard API Key</h2>
-                <p class="page-intro" style="margin-bottom: 2rem;">Put in your OD Dash API key. Now it's purely to verify you have access to Creator Events. The repo is COMPLETELY open-source and you can check whether it's safe if you have trust issues ;)</p>
-                
-                <input type="password" id="api-key-input" class="text-input" placeholder="API Key..." style="margin-bottom: 1rem; text-align: center;">
-                
-                <button style="width: 100%; padding: 0.8rem;" onclick="submitApiKey()">
-                    Go <i class="fa-solid fa-arrow-right" style="margin-left: 0.5rem;"></i>
-                </button>
-            </div>
-
+                <form id="api-key-form">
+                    <label class="sr-only" for="api-key-input">Orion Drift dashboard API key</label>
+                    <input type="password" id="api-key-input" class="text-input" placeholder="API key" autocomplete="off" required style="margin-bottom: 0.75rem; text-align: center;">
+                    <p id="setup-error" class="setup-error" role="alert" aria-live="polite"></p>
+                    <button id="submit-api-key" type="submit" style="width: 100%; padding: 0.8rem;">
+                        Continue <i class="fa-solid fa-arrow-right" style="margin-left: 0.5rem;"></i>
+                    </button>
+                </form>
+            </section>
+            <aside class="setup-guide-panel" aria-label="API key tutorial">
+                <img class="api-key-guide" src="https://cdn.discordapp.com/attachments/1395028809819885728/1556717675286106122/2026-10-0520-19-25-ezgif.com-video-to-gif-converter.gif?backend=b2&ex=6ac52dd0&is=6ac3dc50&hm=d93fc2db2948fa382fe56ebbe3741b850b1a0b1ddce47d57e8a2979f47409936&" alt="Tutorial showing how to create an Orion Drift dashboard API key">
+            </aside>
         </div>
     </div>
 
     <script>
-        const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.get('step') === '2') {
-            document.getElementById('step-1').classList.remove('active');
-            document.getElementById('step-2').classList.add('active');
-        }
-        if (urlParams.get('error') === 'unauthorized') {
-            alert('You are not authorized to use this website.');
-        }
-
-        async function submitApiKey() {
-            const key = document.getElementById('api-key-input').value.trim();
+        document.getElementById('api-key-form').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const input = document.getElementById('api-key-input');
+            const errorMessage = document.getElementById('setup-error');
+            const submitButton = document.getElementById('submit-api-key');
+            const key = input.value.trim();
             if (!key) return;
 
-            const res = await fetch('/api/auth/finalize', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ dashApiKey: key })
-            });
-
-            if (res.ok) {
+            errorMessage.textContent = '';
+            submitButton.disabled = true;
+            submitButton.textContent = 'Checking key…';
+            try {
+                const response = await fetch('/api/auth/finalize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ dashApiKey: key })
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(data.error || 'Uhm bad API key. Remake it or try again?');
                 window.location.href = '/';
-            } else {
-                const data = await res.json().catch(() => ({}));
-                alert(data.error || 'Session expired or invalid. Please try again.');
+            } catch (error) {
+                errorMessage.textContent = error.message || 'Uhm bad API key. Remake it or try again?';
+            } finally {
+                submitButton.disabled = false;
+                submitButton.innerHTML = 'Continue <i class="fa-solid fa-arrow-right" style="margin-left: 0.5rem;"></i>';
             }
-        }
+        });
     </script>
 </body>
 </html>
