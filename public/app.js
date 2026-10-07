@@ -6,6 +6,8 @@ let CurrentFleetConfig = {};
 let ActiveWhitelistKey = null;
 let PendingRequests = 0;
 let WeeklySelectorState = { type: 'race', district: 'pink-draft', weeklyId: null };
+let StationConfigEditing = false;
+let StationConfigEditorOriginal = '';
 
 const NativeFetch = window.fetch.bind(window);
 window.fetch = async (...Arguments) => {
@@ -84,6 +86,10 @@ function EndRequest() {
     SetRequestState(false);
 }
 
+function SetStationPageLoading(IsLoading) {
+    document.getElementById('view-station')?.classList.toggle('is-loading', IsLoading);
+}
+
 async function Init() {
     BeginRequest();
     try {
@@ -92,44 +98,62 @@ async function Init() {
             window.location.href = '/setup.html';
             return;
         }
-        let AuthData = await AuthRes.json();
-        var Res = await fetch('/api/stations');
-        var Data = await Res.json();
+        await AuthRes.json();
+    } finally {
+        EndRequest();
+    }
+    await RefreshStations();
+}
 
-        if (!Res.ok) throw new Error(Data.error || 'Failed to fetch stations');
-        
-        if (!Data.stations) return;
+function GetRegionLabel(Region) {
+    return Region === 'eu-central-1' ? 'EU' : Region === 'us-east-2' ? 'NA' : Region;
+}
 
-        var OnlineStations = Data.stations.filter(S => S.online);
-        if (OnlineStations.length === 0) return;
+async function RefreshStations() {
+    const Container = document.getElementById('station-list');
+    const RefreshButton = document.getElementById('stations-refresh');
+    if (!Container) return;
+    if (RefreshButton) RefreshButton.disabled = true;
+    Container.innerHTML = Array.from({ length: 2 }, () => '<div class="card station-skeleton" aria-hidden="true"><span></span><span></span></div>').join('');
+    BeginRequest();
+    try {
+        const Response = await fetch('/api/stations');
+        const Data = await Response.json();
+        if (!Response.ok) throw new Error(Data.error || 'Failed to fetch stations');
 
-        var MaxVersion = Math.max(...OnlineStations.map(S => parseInt(S.version)));
-        var TargetStations = OnlineStations.filter(S => parseInt(S.version) === MaxVersion);
+        const OnlineStations = (Data.stations || []).filter(Station => Station.online);
+        if (OnlineStations.length === 0) {
+            Container.innerHTML = '<p class="station-list-empty">No online stations available.</p>';
+            return;
+        }
 
-        var Container = document.getElementById('station-list');
+        const MaxVersion = Math.max(...OnlineStations.map(Station => parseInt(Station.version, 10)));
+        const TargetStations = OnlineStations.filter(Station => parseInt(Station.version, 10) === MaxVersion);
         Container.innerHTML = '';
-
         TargetStations.forEach(Station => {
-            var Card = document.createElement('div');
+            const Card = document.createElement('div');
             Card.className = 'card station-card';
-            var StationTitle = document.createElement('h3');
+            const StationTitle = document.createElement('h3');
             StationTitle.className = 'station-region-title';
-            StationTitle.textContent = Station.region === 'eu-central-1'
-                ? 'EU'
-                : Station.region === 'us-east-2'
-                    ? 'NA'
-                    : Station.region;
-            var StationName = document.createElement('div');
+            StationTitle.textContent = GetRegionLabel(Station.region);
+            const StationName = document.createElement('div');
             StationName.className = 'station-card-name';
             StationName.textContent = Station.station_name;
-            var StationDetails = document.createElement('div');
+            const StationDetails = document.createElement('div');
             StationDetails.className = 'station-card-details';
             StationDetails.textContent = `${Station.player_count} players · Version ${Station.version}`;
             Card.append(StationTitle, StationName, StationDetails);
             Card.onclick = () => SelectStation(Station.station_id, Station.station_name, Station.region);
             Container.appendChild(Card);
         });
+    } catch (Error) {
+        Container.innerHTML = '';
+        const ErrorMessage = document.createElement('p');
+        ErrorMessage.className = 'station-list-empty is-error';
+        ErrorMessage.textContent = Error.message || 'Failed to fetch stations.';
+        Container.appendChild(ErrorMessage);
     } finally {
+        if (RefreshButton) RefreshButton.disabled = false;
         EndRequest();
     }
 }
@@ -139,6 +163,50 @@ const PlayerSearchDelay = 180;
 const BulkPlayerSearchDelay = 700;
 let AllFleetRoles = [];
 let PlayerLookupGeneration = 0;
+let OnlinePlayersRefreshTimer = null;
+let OnlineRoleTargetId = null;
+let CurrentPlayersViewMode = 'online';
+let CurrentSelectionTargets = [];
+let OnlinePlayersRefreshGeneration = 0;
+const OnlinePlayerWindowMs = 5 * 60 * 1000;
+let MissingPlayerNames = [];
+let CurrentSelectionIsGroup = false;
+
+function SetOnlinePlayersStatus(Message) {
+    const Status = document.getElementById('online-players-status');
+    if (Status) Status.textContent = Message;
+    const MissingButton = document.getElementById('missing-players-open');
+    if (MissingButton) MissingButton.classList.toggle('hidden', MissingPlayerNames.length === 0);
+}
+
+function UpdateMissingPlayerNames(Names) {
+    MissingPlayerNames = [...new Set(Names.filter(Boolean))];
+    const Button = document.getElementById('missing-players-open');
+    if (Button) {
+        Button.classList.toggle('hidden', MissingPlayerNames.length === 0);
+        Button.textContent = `Not found (${MissingPlayerNames.length})`;
+    }
+}
+
+function OpenMissingPlayersModal() {
+    const List = document.getElementById('missing-players-list');
+    if (!List) return;
+    List.innerHTML = '';
+    MissingPlayerNames.forEach(Name => {
+        const Item = document.createElement('li');
+        Item.textContent = Name;
+        List.appendChild(Item);
+    });
+    document.getElementById('missing-players-modal').classList.add('active');
+}
+
+function CloseMissingPlayersModal() {
+    document.getElementById('missing-players-modal').classList.remove('active');
+}
+
+function HandleMissingPlayersBackdropClick(Event) {
+    if (Event.target && Event.target.id === 'missing-players-modal') CloseMissingPlayersModal();
+}
 
 async function FetchFleetRoles() {
     if (AllFleetRoles.length > 0) return;
@@ -406,6 +474,11 @@ async function ExecuteDeleteGroup() {
 document.addEventListener('DOMContentLoaded', () => {
     LoadGroups();
     SetMainTab('stations');
+    document.getElementById('online-players-refresh')?.addEventListener('click', () => {
+        CurrentPlayersViewMode = 'online';
+        CurrentSelectionIsGroup = false;
+        RefreshOnlinePlayers();
+    });
 
     document.querySelectorAll('.page-tab').forEach((TabButton) => {
         TabButton.addEventListener('click', () => SetMainTab(TabButton.dataset.tab));
@@ -418,7 +491,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const LookupGeneration = ++PlayerLookupGeneration;
             let Query = E.target.value.trim();
             let ResultsContainer = document.getElementById('player-search-results');
-            
+
             if (Query.length === 0) {
                 ResultsContainer.classList.add('hidden');
                 return;
@@ -569,6 +642,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 let ActiveRoleTargets = [];
 let PendingRoleRemoval = null;
+let PendingRoleRemovalTargets = [];
 
 function SetPlayerLookupStatus(Container, Message, State = 'loading') {
     Container.innerHTML = '';
@@ -627,16 +701,14 @@ async function ResolveCommaSeparatedPlayers(Usernames, LookupGeneration) {
 
         if (LookupGeneration !== PlayerLookupGeneration) return;
         if (Players.length === 0) {
+            UpdateMissingPlayerNames(MissingUsernames);
+            SetOnlinePlayersStatus('No matching players found.');
             SetPlayerLookupStatus(ResultsContainer, 'No matching players found. Check the usernames and try again.', 'empty');
             ResultsContainer.classList.remove('hidden');
             return;
         }
 
-        const MissingSummary = MissingUsernames.length
-            ? `; ${MissingUsernames.length} not found: ${MissingUsernames.slice(0, 5).join(', ')}${MissingUsernames.length > 5 ? ', …' : ''}`
-            : '';
-        SelectPlayers(Players, `${Players.length} players${MissingUsernames.length ? ` (${MissingUsernames.length} not found)` : ''}`);
-        document.getElementById('selected-player-name').title = MissingSummary ? `Not found${MissingSummary}` : '';
+        await SelectPlayers(Players, `${Players.length} players`, MissingUsernames);
     } finally {
         EndRequest();
     }
@@ -646,43 +718,341 @@ async function SelectPlayer(Id, Username) {
     await SelectPlayers([{ id: Id, username: Username }], Username);
 }
 
-async function SelectPlayers(Players, DisplayName) {
+async function SelectPlayers(Players, DisplayName, MissingNames = [], IsGroup = false) {
     PlayerLookupGeneration += 1;
+    CurrentPlayersViewMode = 'selection';
+    CurrentSelectionTargets = [...Players];
+    CurrentSelectionIsGroup = IsGroup;
     ActiveRoleTargets = [...Players];
+    OnlineRoleTargetId = null;
+    UpdateMissingPlayerNames(MissingNames);
     document.getElementById('player-search-results').classList.add('hidden');
     document.getElementById('player-search-input').value = '';
-    document.getElementById('selected-player-name').textContent = DisplayName;
-    document.getElementById('selected-player-container').classList.remove('hidden');
+    SetOnlinePlayersStatus(Players.length > 1 || IsGroup ? `0/${Players.length} Checking…` : 'Checking roles…');
     await LoadPlayerRoles();
 }
 
 async function SelectGroup(Group) {
-    await SelectPlayers(Group.players, Group.label + " (Group)");
+    await SelectPlayers(Group.players, Group.label + " (Group)", [], true);
 }
 
 async function LoadPlayerRoles() {
     if (ActiveRoleTargets.length === 0) return;
+    const Targets = [...ActiveRoleTargets];
+    const TargetSignature = Targets.map(Target => Target.id).join('|');
     BeginRequest();
     try {
-        let RoleMap = new Map();
-        for (let Target of ActiveRoleTargets) {
-            let Res = await fetch(`/api/players/${Target.id}/roles`);
-            let Data = await Res.json();
-            if (Data.roles) {
-                Data.roles.forEach(R => {
-                    if (!RoleMap.has(R.role_id)) {
-                        RoleMap.set(R.role_id, { role: R, owners: [] });
-                    }
-                    RoleMap.get(R.role_id).owners.push(Target.username);
-                });
+        const Players = Targets.map(Target => ({ ...Target, roles: [] }));
+        const MissingNames = [...MissingPlayerNames];
+        for (let Index = 0; Index < Targets.length; Index++) {
+            const Target = Targets[Index];
+            const Player = Players.find(Entry => Entry.id === Target.id);
+            SetOnlinePlayersStatus(`${Index + 1}/${Targets.length} ${Target.username}`);
+            try {
+                const Res = await fetch(`/api/players/${encodeURIComponent(Target.id)}/roles`);
+                const Data = await Res.json();
+                if (!Res.ok) {
+                    const Error = new Error(Data.error || 'Failed to fetch player roles');
+                    Error.status = Res.status;
+                    throw Error;
+                }
+                Player.roles = Array.isArray(Data.roles) ? Data.roles : [];
+            } catch (Error) {
+                console.error(`Failed to load roles for ${Target.username}:`, Error);
+                if (Error.status === 404) {
+                    MissingNames.push(Target.username);
+                    Player.notFound = true;
+                } else {
+                    Player.rolesUnavailable = true;
+                }
             }
-            await Delay(200);
+            if (Index < Targets.length - 1) await Delay(300);
         }
 
-        RenderPlayerRoles(RoleMap);
+        const CurrentSelectionSignature = CurrentSelectionTargets.map(Target => Target.id).join('|');
+        if (TargetSignature !== CurrentSelectionSignature || CurrentPlayersViewMode !== 'selection') return;
+        UpdateMissingPlayerNames(MissingNames);
+        RenderPlayersTable(Players, CurrentSelectionIsGroup || CurrentSelectionTargets.length > 1);
+        SetOnlinePlayersStatus('');
     } finally {
         EndRequest();
     }
+}
+
+function RenderPlayersTable(Players, IsGroup = false) {
+    const Body = document.getElementById('online-players-body');
+    if (!Body) return;
+    Body.innerHTML = '';
+
+    const RoleDetails = new Map();
+    Players.forEach(Player => {
+        (Player.roles || []).forEach(Role => {
+            const RoleId = Role.role_id || Role.name || Role.role_name;
+            if (!RoleId) return;
+            if (!RoleDetails.has(RoleId)) RoleDetails.set(RoleId, { role: Role, owners: [] });
+            RoleDetails.get(RoleId).owners.push({ id: Player.id || Player.user_id, username: Player.username });
+        });
+    });
+
+    if (IsGroup) {
+        const SharedRow = document.createElement('tr');
+        SharedRow.className = 'online-player-shared-row';
+        const SharedNameCell = document.createElement('td');
+        SharedNameCell.className = 'online-player-name';
+        SharedNameCell.textContent = 'Shared';
+
+        const SharedRolesCell = document.createElement('td');
+        SharedRolesCell.className = 'online-player-roles';
+        const SharedRoleDetails = [...RoleDetails.values()].filter(Details => Details.owners.length === Players.length);
+        if (SharedRoleDetails.length === 0) {
+            SharedRolesCell.textContent = 'No shared roles';
+            SharedRolesCell.classList.add('role-empty');
+        } else {
+            SharedRoleDetails.forEach(Details => {
+                const Role = Details.role;
+                const RoleName = Role.role_name || Role.name || 'Role';
+                const RoleItem = document.createElement('span');
+                RoleItem.className = 'online-shared-role-item';
+
+                const Badge = document.createElement('button');
+                Badge.type = 'button';
+                Badge.className = 'online-role-badge is-shared';
+                Badge.textContent = RoleName;
+                Badge.title = 'Shared role';
+                Badge.addEventListener('click', () => OpenRoleInfoModal(
+                    RoleName,
+                    Role.permissions || [],
+                    Details.owners,
+                    Role.role_id,
+                    Role.role_description || ''
+                ));
+
+                const RemoveButton = document.createElement('button');
+                RemoveButton.type = 'button';
+                RemoveButton.className = 'online-role-remove button-secondary';
+                RemoveButton.textContent = '×';
+                RemoveButton.disabled = !Role.role_id;
+                RemoveButton.title = `Remove ${RoleName} from everyone`;
+                RemoveButton.setAttribute('aria-label', `Remove ${RoleName} from everyone`);
+                RemoveButton.addEventListener('click', () => {
+                    const Targets = Players.map(Player => ({
+                        id: Player.id || Player.user_id,
+                        username: Player.username
+                    }));
+                    OpenRoleRemoveModal(Role.role_id, RoleName, Targets);
+                });
+
+                RoleItem.append(Badge, RemoveButton);
+                SharedRolesCell.appendChild(RoleItem);
+            });
+        }
+
+        const SharedActionCell = document.createElement('td');
+        SharedActionCell.className = 'online-player-action';
+        const AddEveryoneButton = document.createElement('button');
+        AddEveryoneButton.type = 'button';
+        AddEveryoneButton.className = 'button-secondary online-add-role';
+        AddEveryoneButton.innerHTML = '<i class="fa-solid fa-plus" aria-hidden="true"></i> Add role to everyone';
+        AddEveryoneButton.addEventListener('click', () => {
+            ActiveRoleTargets = Players.map(Player => ({
+                id: Player.id || Player.user_id,
+                username: Player.username
+            }));
+            OnlineRoleTargetId = null;
+            OpenAddRoleModal();
+        });
+
+        SharedActionCell.appendChild(AddEveryoneButton);
+        SharedRow.append(SharedNameCell, SharedRolesCell, SharedActionCell);
+        Body.appendChild(SharedRow);
+    }
+
+    Players.forEach(Player => {
+        const Row = document.createElement('tr');
+        const NameCell = document.createElement('td');
+        NameCell.className = 'online-player-name';
+        const PlayerId = Player.user_id || Player.id;
+        const NameButton = document.createElement('button');
+        NameButton.type = 'button';
+        NameButton.className = 'player-name-copy';
+        NameButton.textContent = Player.username || 'Unknown player';
+        NameButton.disabled = !PlayerId;
+        NameButton.setAttribute('aria-label', PlayerId ? `Copy player ID for ${Player.username}` : 'Player ID unavailable');
+        const PlayerIdTooltip = document.createElement('span');
+        PlayerIdTooltip.className = 'player-id-tooltip';
+        PlayerIdTooltip.textContent = PlayerId ? `ID: ${PlayerId}` : 'Player ID unavailable';
+        NameButton.appendChild(PlayerIdTooltip);
+        const PositionPlayerIdTooltip = () => {
+            const Anchor = NameButton.getBoundingClientRect();
+            const TooltipBounds = PlayerIdTooltip.getBoundingClientRect();
+            let Top = Anchor.top - TooltipBounds.height - 8;
+            PlayerIdTooltip.classList.toggle('is-below', Top < 8);
+            if (Top < 8) Top = Anchor.bottom + 8;
+            const Left = Math.max(
+                TooltipBounds.width / 2 + 8,
+                Math.min(Anchor.left + Anchor.width / 2, window.innerWidth - TooltipBounds.width / 2 - 8)
+            );
+            PlayerIdTooltip.style.top = `${Top}px`;
+            PlayerIdTooltip.style.left = `${Left}px`;
+        };
+        NameButton.addEventListener('mouseenter', PositionPlayerIdTooltip);
+        NameButton.addEventListener('focus', PositionPlayerIdTooltip);
+        NameButton.addEventListener('click', async () => {
+            if (!PlayerId) return;
+            try {
+                if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(String(PlayerId));
+                } else {
+                    const CopyInput = document.createElement('textarea');
+                    CopyInput.value = String(PlayerId);
+                    CopyInput.style.position = 'fixed';
+                    CopyInput.style.opacity = '0';
+                    document.body.appendChild(CopyInput);
+                    CopyInput.select();
+                    document.execCommand('copy');
+                    CopyInput.remove();
+                }
+                PlayerIdTooltip.textContent = 'Copied!';
+                setTimeout(() => { PlayerIdTooltip.textContent = `ID: ${PlayerId}`; }, 1200);
+            } catch (Error) {
+                console.error('Could not copy player ID:', Error);
+                PlayerIdTooltip.textContent = 'Copy failed';
+                setTimeout(() => { PlayerIdTooltip.textContent = `ID: ${PlayerId}`; }, 1200);
+            }
+        });
+        NameCell.appendChild(NameButton);
+
+        const RolesCell = document.createElement('td');
+        RolesCell.className = 'online-player-roles';
+        const PlayerRoles = (Player.roles || []).filter(Role => {
+            if (!IsGroup) return true;
+            const RoleId = Role.role_id || Role.name || Role.role_name;
+            const Details = RoleDetails.get(RoleId);
+            return !Details || Details.owners.length < Players.length;
+        });
+        if (Player.notFound) {
+            RolesCell.textContent = 'Player not found';
+            RolesCell.classList.add('role-empty');
+        } else if (Player.rolesUnavailable) {
+            RolesCell.textContent = 'Roles unavailable';
+            RolesCell.classList.add('role-empty');
+        } else if (PlayerRoles.length === 0) {
+            RolesCell.textContent = IsGroup ? 'No exclusive roles' : 'No roles';
+            RolesCell.classList.add('role-empty');
+        } else {
+            PlayerRoles.forEach(Role => {
+                const RoleId = Role.role_id || Role.name || Role.role_name;
+                const Details = RoleDetails.get(RoleId);
+                if (!Details) return;
+                const IsShared = IsGroup && Details.owners.length === Players.length;
+                const Badge = document.createElement('button');
+                Badge.type = 'button';
+                Badge.className = `online-role-badge${IsGroup ? (IsShared ? ' is-shared' : ' is-exclusive') : ''}`;
+                const RoleName = Role.role_name || Role.name || 'Role';
+                Badge.textContent = RoleName;
+                if (IsGroup) Badge.title = IsShared ? 'Shared role' : 'Exclusive role';
+                Badge.addEventListener('click', () => OpenRoleInfoModal(
+                    RoleName,
+                    Role.permissions || Details.role.permissions || [],
+                    Details.owners,
+                    Role.role_id,
+                    Role.role_description || Details.role.role_description || ''
+                ));
+                if (IsGroup) {
+                    const RoleItem = document.createElement('span');
+                    RoleItem.className = 'online-shared-role-item';
+                    const RemoveButton = document.createElement('button');
+                    RemoveButton.type = 'button';
+                    RemoveButton.className = 'online-role-remove button-secondary';
+                    RemoveButton.textContent = '×';
+                    RemoveButton.disabled = !Role.role_id;
+                    RemoveButton.title = `Remove ${RoleName} from ${Player.username}`;
+                    RemoveButton.setAttribute('aria-label', `Remove ${RoleName} from ${Player.username}`);
+                    RemoveButton.addEventListener('click', () => OpenRoleRemoveModal(
+                        Role.role_id,
+                        RoleName,
+                        [{ id: Player.id || Player.user_id, username: Player.username }]
+                    ));
+                    RoleItem.append(Badge, RemoveButton);
+                    RolesCell.appendChild(RoleItem);
+                } else {
+                    RolesCell.appendChild(Badge);
+                }
+            });
+        }
+
+        const ActionCell = document.createElement('td');
+        ActionCell.className = 'online-player-action';
+        const AddButton = document.createElement('button');
+        AddButton.type = 'button';
+        AddButton.className = 'button-secondary online-add-role';
+        AddButton.innerHTML = '<i class="fa-solid fa-plus" aria-hidden="true"></i> Add role';
+        AddButton.setAttribute('aria-label', `Add role to ${Player.username}`);
+        AddButton.disabled = Boolean(Player.notFound);
+        AddButton.addEventListener('click', () => OpenTablePlayerRoleModal(Player));
+        ActionCell.appendChild(AddButton);
+        Row.append(NameCell, RolesCell, ActionCell);
+        Body.appendChild(Row);
+    });
+}
+
+async function RefreshOnlinePlayers() {
+    const Status = document.getElementById('online-players-status');
+    const Body = document.getElementById('online-players-body');
+    if (!Status || !Body || CurrentPlayersViewMode !== 'online') return;
+
+    const RequestGeneration = ++OnlinePlayersRefreshGeneration;
+    CurrentSelectionIsGroup = false;
+    UpdateMissingPlayerNames([]);
+    BeginRequest();
+    SetOnlinePlayersStatus('Checking who is online…');
+    Status.classList.remove('is-error');
+    try {
+        const Response = await fetch('/api/players/online');
+        const Data = await Response.json();
+        if (!Response.ok) throw new Error(Data.error || 'Failed to fetch players');
+        if (RequestGeneration !== OnlinePlayersRefreshGeneration || CurrentPlayersViewMode !== 'online') return;
+
+        const Now = Date.now();
+        const OnlinePlayers = (Data.items || []).filter(Player => {
+            const LastLogin = Date.parse(Player.last_login || '');
+            const Age = Now - LastLogin;
+            return Number.isFinite(LastLogin) && Age >= -60_000 && Age <= OnlinePlayerWindowMs;
+        });
+
+        const PlayersWithRoles = await Promise.all(OnlinePlayers.map(async Player => {
+            if (Array.isArray(Player.roles)) return { ...Player, roles: Player.roles };
+            try {
+                const RolesResponse = await fetch(`/api/players/${encodeURIComponent(Player.user_id)}/roles`);
+                const RolesData = await RolesResponse.json();
+                if (!RolesResponse.ok) throw new Error(RolesData.error || 'Failed to fetch roles');
+                return { ...Player, roles: Array.isArray(RolesData.roles) ? RolesData.roles : [] };
+            } catch (Error) {
+                console.error(`Failed to load roles for ${Player.username}:`, Error);
+                return { ...Player, roles: [], rolesUnavailable: true };
+            }
+        }));
+        if (RequestGeneration !== OnlinePlayersRefreshGeneration || CurrentPlayersViewMode !== 'online') return;
+        RenderPlayersTable(PlayersWithRoles);
+
+        Status.textContent = '';
+        Status.classList.toggle('is-empty', OnlinePlayers.length === 0);
+    } catch (Error) {
+        console.error('Online player list failed:', Error);
+        if (RequestGeneration !== OnlinePlayersRefreshGeneration || CurrentPlayersViewMode !== 'online') return;
+        Body.innerHTML = '';
+        Status.textContent = Error.message || 'Failed to load online players.';
+        Status.classList.add('is-error');
+    } finally {
+        EndRequest();
+    }
+}
+
+function OpenTablePlayerRoleModal(Player) {
+    const Id = Player.id || Player.user_id;
+    ActiveRoleTargets = [{ id: Id, username: Player.username }];
+    OnlineRoleTargetId = CurrentPlayersViewMode === 'online' ? Id : null;
+    OpenAddRoleModal();
 }
 
 function CreatePlayerRoleTag(RoleData, ShowOwners) {
@@ -713,7 +1083,7 @@ function CreatePlayerRoleTag(RoleData, ShowOwners) {
     InfoBtn.innerHTML = '<i class="fa-solid fa-circle-info" aria-hidden="true"></i>';
     InfoBtn.onclick = function(Event) {
         Event.stopPropagation();
-        OpenRoleInfoModal(RoleData.role.role_name, RoleData.role.permissions);
+        OpenRoleInfoModal(RoleData.role.role_name, RoleData.role.permissions, [], RoleData.role.role_id, RoleData.role.role_description);
     };
 
     let RemoveBtn = document.createElement('button');
@@ -803,6 +1173,7 @@ function RenderAvailableRoles(Query = '') {
         let Div = document.createElement('div');
         Div.className = 'role-option';
         let RoleName = document.createElement('strong');
+        RoleName.className = 'role-option-name';
         RoleName.textContent = Role.role_name;
         Div.appendChild(RoleName);
 
@@ -812,6 +1183,7 @@ function RenderAvailableRoles(Query = '') {
         if (RolePermissions.length === 0) {
             let Permission = document.createElement('li');
             Permission.textContent = 'No permissions assigned.';
+            Permission.className = 'role-permission-empty';
             Permissions.appendChild(Permission);
         } else {
             RolePermissions.forEach(PermissionName => {
@@ -878,15 +1250,21 @@ function UpdateRoleUpdateProgress(ProgressNode, Action, Index, Total, Username) 
     ProgressNode.querySelector('.role-update-current').textContent = Username;
 }
 
-function OpenRoleRemoveModal(RoleId, RoleName) {
+function OpenRoleRemoveModal(RoleId, RoleName, Targets = ActiveRoleTargets) {
     PendingRoleRemoval = RoleId;
-    document.getElementById('role-remove-message').textContent = `Remove ${RoleName} from the selected players?`;
+    PendingRoleRemovalTargets = [...Targets];
+    const TargetNames = PendingRoleRemovalTargets.map(Target => Target.username).filter(Boolean);
+    const TargetDescription = TargetNames.length === 1
+        ? `${TargetNames[0]}`
+        : `${TargetNames.length} selected players`;
+    document.getElementById('role-remove-message').textContent = `Remove ${RoleName} from ${TargetDescription}?`;
     document.getElementById('role-remove-modal').classList.add('active');
 }
 
 function CloseRoleRemoveModal() {
     document.getElementById('role-remove-modal').classList.remove('active');
     PendingRoleRemoval = null;
+    PendingRoleRemovalTargets = [];
 }
 
 function HandleRoleRemoveBackdropClick(Event) {
@@ -895,25 +1273,66 @@ function HandleRoleRemoveBackdropClick(Event) {
     }
 }
 
-function OpenRoleInfoModal(RoleName, Permissions) {
+function OpenRoleInfoModal(RoleName, Permissions, Players = [], RoleId = null, Description = '') {
     let PermissionsContainer = document.getElementById('role-info-permissions');
     PermissionsContainer.innerHTML = '';
     let PermissionList = Array.isArray(Permissions) ? Permissions : [];
+    let MembersContainer = document.getElementById('role-info-members');
+    MembersContainer.innerHTML = '';
 
     if (PermissionList.length === 0) {
-        let Empty = document.createElement('p');
+        let Empty = document.createElement('span');
         Empty.className = 'role-empty';
         Empty.textContent = 'No permissions assigned.';
         PermissionsContainer.appendChild(Empty);
     } else {
-        PermissionList.forEach(PermissionName => {
-            let Permission = document.createElement('li');
-            Permission.textContent = PermissionName;
+        PermissionList.forEach(PermissionValue => {
+            let Permission = document.createElement('span');
+            Permission.className = 'role-permission-chip';
+            Permission.textContent = String(PermissionValue);
             PermissionsContainer.appendChild(Permission);
         });
     }
 
-    document.getElementById('role-info-title').textContent = `${RoleName} permissions`;
+    const UniquePlayers = [...new Map(Players
+        .filter(Player => Player && (typeof Player === 'string' || Player.username))
+        .map(Player => {
+            const Member = typeof Player === 'string' ? { username: Player } : Player;
+            return [Member.id || Member.username, Member];
+        })).values()];
+    if (UniquePlayers.length === 0) {
+        const Empty = document.createElement('span');
+        Empty.className = 'role-empty';
+        Empty.textContent = 'No players with this role in the current list.';
+        MembersContainer.appendChild(Empty);
+    } else {
+        UniquePlayers.forEach(Player => {
+            const Member = document.createElement('div');
+            Member.className = 'role-member-row';
+            const Name = document.createElement('span');
+            Name.className = 'role-member-name';
+            Name.textContent = Player.username;
+            Member.appendChild(Name);
+            if (RoleId && Player.id) {
+                const RemoveButton = document.createElement('button');
+                RemoveButton.type = 'button';
+                RemoveButton.className = 'role-member-remove';
+                RemoveButton.textContent = '×';
+                RemoveButton.setAttribute('aria-label', `Remove ${RoleName} from ${Player.username}`);
+                RemoveButton.addEventListener('click', () => {
+                    CloseRoleInfoModal();
+                    OpenRoleRemoveModal(RoleId, RoleName, [{ id: Player.id, username: Player.username }]);
+                });
+                Member.appendChild(RemoveButton);
+            }
+            MembersContainer.appendChild(Member);
+        });
+    }
+
+    document.getElementById('role-info-title').textContent = `${RoleName} details`;
+    const DescriptionElement = document.getElementById('role-info-description');
+    DescriptionElement.textContent = Description || 'No description provided.';
+    DescriptionElement.classList.toggle('is-empty', !Description);
     document.getElementById('role-info-modal').classList.add('active');
 }
 
@@ -930,22 +1349,20 @@ function HandleRoleInfoBackdropClick(Event) {
 async function ConfirmRoleRemove() {
     if (!PendingRoleRemoval) return;
     let RoleId = PendingRoleRemoval;
+    ActiveRoleTargets = [...PendingRoleRemovalTargets];
     CloseRoleRemoveModal();
     await RemovePlayerRole(RoleId);
 }
 
 async function RemovePlayerRole(RoleId) {
     BeginRequest();
-    
-    let Container = document.getElementById('player-roles-container');
-    let ProgressNode = CreateRoleUpdateProgress('Removing role');
-    Container.prepend(ProgressNode);
+    const Status = document.getElementById('online-players-status');
 
     try {
         let errors = [];
         for (let i = 0; i < ActiveRoleTargets.length; i++) {
             let Target = ActiveRoleTargets[i];
-            UpdateRoleUpdateProgress(ProgressNode, 'Removing role', i + 1, ActiveRoleTargets.length, Target.username);
+            Status.textContent = `${i + 1}/${ActiveRoleTargets.length} ${Target.username}`;
             
             let Res = await FetchWithRetry(`/api/players/${Target.id}/roles/${RoleId}`, { method: 'DELETE' });
             
@@ -960,7 +1377,12 @@ async function RemovePlayerRole(RoleId) {
             alert('Error removing role:\n\n' + errors.join('\n'));
         }
         
-        await LoadPlayerRoles();
+        if (CurrentPlayersViewMode === 'online') {
+            await RefreshOnlinePlayers();
+        } else {
+            ActiveRoleTargets = [...CurrentSelectionTargets];
+            await LoadPlayerRoles();
+        }
     } finally {
         EndRequest();
     }
@@ -969,16 +1391,13 @@ async function RemovePlayerRole(RoleId) {
 async function AddPlayerRole(RoleId) {
     CloseAddRoleModal();
     BeginRequest();
-    
-    let Container = document.getElementById('player-roles-container');
-    let ProgressNode = CreateRoleUpdateProgress('Assigning role');
-    Container.prepend(ProgressNode);
+    const Status = document.getElementById('online-players-status');
 
     try {
         let errors = [];
         for (let i = 0; i < ActiveRoleTargets.length; i++) {
             let Target = ActiveRoleTargets[i];
-            UpdateRoleUpdateProgress(ProgressNode, 'Assigning role', i + 1, ActiveRoleTargets.length, Target.username);
+            Status.textContent = `${i + 1}/${ActiveRoleTargets.length} ${Target.username}`;
             
             let Res = await FetchWithRetry(`/api/players/${Target.id}/roles/${RoleId}`, { method: 'POST' });
             
@@ -993,7 +1412,13 @@ async function AddPlayerRole(RoleId) {
             alert('Error assigning role:\n\n' + errors.join('\n'));
         }
         
-        await LoadPlayerRoles();
+        if (CurrentPlayersViewMode === 'online') {
+            OnlineRoleTargetId = null;
+            await RefreshOnlinePlayers();
+        } else {
+            ActiveRoleTargets = [...CurrentSelectionTargets];
+            await LoadPlayerRoles();
+        }
     } finally {
         EndRequest();
     }
@@ -1068,9 +1493,10 @@ async function UpdateFleetAllowlist(NewValue) {
 }
 
 async function SelectStation(Id, Name, Region) {
+    if (StationConfigEditing) SetStationConfigEditorMode(false);
     CurrentStationId = Id;
     document.getElementById('station-name-display').textContent = Name;
-    document.getElementById('station-region-display').textContent = Region;
+    document.getElementById('station-region-display').textContent = GetRegionLabel(Region);
     SetMainTab('stations');
     
     await RefreshConfig();
@@ -1084,6 +1510,16 @@ function SetMainTab(TabName) {
 
     if (TabName === 'server') {
         RefreshFleetConfig();
+        CurrentPlayersViewMode = 'online';
+        RefreshOnlinePlayers();
+        if (!OnlinePlayersRefreshTimer) {
+            OnlinePlayersRefreshTimer = setInterval(() => {
+                if (document.getElementById('view-server')?.classList.contains('active')) RefreshOnlinePlayers();
+            }, 30_000);
+        }
+    } else if (OnlinePlayersRefreshTimer) {
+        clearInterval(OnlinePlayersRefreshTimer);
+        OnlinePlayersRefreshTimer = null;
     }
 
     document.querySelectorAll('.page-tab').forEach((TabButton) => {
@@ -1112,6 +1548,7 @@ function SetMainTab(TabName) {
 }
 
 function ShowStations() {
+    if (StationConfigEditing) SetStationConfigEditorMode(false);
     CurrentStationId = null;
     SetMainTab('stations');
 }
@@ -1189,18 +1626,153 @@ function InitializeLayoutDivider() {
 
 async function RefreshConfig() {
     BeginRequest();
+    SetStationPageLoading(true);
     try {
         let Res = await fetch(`/api/stations/${CurrentStationId}/config`);
         let Data = await Res.json();
 
-        CurrentFullConfig = Data.fullConfig;
-        CurrentStationConfig = Data.stationConfig;
-        CurrentStationConfigKeys = Object.keys(Data.stationConfig);
+        if (!Res.ok) throw new Error(Data.error || 'Failed to fetch station config');
+        CurrentFullConfig = Data.fullConfig || {};
+        CurrentStationConfig = Data.stationConfig || {};
+        CurrentStationConfigKeys = Object.keys(CurrentStationConfig);
 
         RenderRawConfig();
         RenderControls();
         RenderWeeklySelector();
+        if (StationConfigEditing) {
+            StationConfigEditorOriginal = JSON.stringify(CurrentStationConfig, null, 2);
+            document.getElementById('station-config-input').value = StationConfigEditorOriginal;
+            ValidateStationConfigEditor();
+        }
     } finally {
+        SetStationPageLoading(false);
+        EndRequest();
+    }
+}
+
+function SetStationConfigEditorStatus(State, Message) {
+    const Status = document.getElementById('station-config-status');
+    Status.dataset.state = State;
+    Status.textContent = Message;
+}
+
+function ValidateStationConfigEditor() {
+    const Input = document.getElementById('station-config-input');
+    try {
+        const Parsed = JSON.parse(Input.value);
+        if (!Parsed || typeof Parsed !== 'object' || Array.isArray(Parsed)) {
+            throw new Error('Not a JSOn');
+        }
+        SetStationConfigEditorStatus('valid', 'Correct JSON!');
+        return Parsed;
+    } catch (Error) {
+        SetStationConfigEditorStatus('invalid', `JSON error: ${Error.message}`);
+        return null;
+    }
+}
+
+function SetStationConfigEditorMode(IsEditing) {
+    StationConfigEditing = IsEditing;
+    const Topbar = document.querySelector('#view-station .topbar');
+    const Controls = document.querySelector('#view-station .controls-panel');
+    const Divider = document.getElementById('layout-divider');
+    [Topbar, Controls, Divider].forEach(Element => {
+        if (Element) Element.inert = IsEditing;
+    });
+    document.getElementById('raw-config').classList.toggle('hidden', IsEditing);
+    document.getElementById('station-config-editor').classList.toggle('hidden', !IsEditing);
+    document.getElementById('config-edit-button').classList.toggle('hidden', IsEditing);
+    document.getElementById('config-editor-actions').classList.toggle('hidden', !IsEditing);
+    document.getElementById('config-mode-label').textContent = IsEditing ? 'Editing station config' : 'Read-only';
+}
+
+function OpenStationConfigEditor() {
+    StationConfigEditorOriginal = JSON.stringify(CurrentStationConfig || {}, null, 2);
+    const Input = document.getElementById('station-config-input');
+    Input.value = StationConfigEditorOriginal;
+    Input.oninput = ValidateStationConfigEditor;
+    SetStationConfigEditorMode(true);
+    ValidateStationConfigEditor();
+    Input.focus();
+}
+
+function CloseStationConfigEditor() {
+    const Input = document.getElementById('station-config-input');
+    if (Input.value !== StationConfigEditorOriginal) {
+        OpenStationConfigDiscardModal('Discard unsaved station config changes?', () => {
+            SetStationConfigEditorMode(false);
+            RenderRawConfig();
+        });
+        return;
+    }
+    SetStationConfigEditorMode(false);
+    RenderRawConfig();
+}
+
+async function RefreshStationConfigEditor() {
+    const Input = document.getElementById('station-config-input');
+    if (Input.value !== StationConfigEditorOriginal) {
+        OpenStationConfigDiscardModal('Discard unsaved changes and refresh station config?', RefreshConfig);
+        return;
+    }
+    await RefreshConfig();
+}
+
+let PendingStationConfigDiscardAction = null;
+
+function OpenStationConfigDiscardModal(Message, Action) {
+    const Modal = document.getElementById('station-config-discard-modal');
+    document.getElementById('station-config-discard-message').textContent = Message;
+    PendingStationConfigDiscardAction = Action;
+    Modal.classList.add('active');
+    Modal.setAttribute('aria-hidden', 'false');
+    document.getElementById('station-config-discard-cancel').focus();
+}
+
+function CloseStationConfigDiscardModal() {
+    const Modal = document.getElementById('station-config-discard-modal');
+    Modal.classList.remove('active');
+    Modal.setAttribute('aria-hidden', 'true');
+    PendingStationConfigDiscardAction = null;
+}
+
+async function ConfirmStationConfigDiscard() {
+    const Action = PendingStationConfigDiscardAction;
+    CloseStationConfigDiscardModal();
+    if (typeof Action === 'function') await Action();
+}
+
+function HandleStationConfigDiscardBackdropClick(Event) {
+    if (Event.target && Event.target.id === 'station-config-discard-modal') {
+        CloseStationConfigDiscardModal();
+    }
+}
+
+async function SaveStationConfigEditor() {
+    const StationConfig = ValidateStationConfigEditor();
+    if (!StationConfig) return;
+    const EditorButtons = [...document.querySelectorAll('#config-editor-actions button')];
+    const EditorInput = document.getElementById('station-config-input');
+    EditorButtons.forEach(Button => { Button.disabled = true; });
+    EditorInput.disabled = true;
+    SetStationConfigEditorStatus('saving', 'Checking and saving station config…');
+    BeginRequest();
+    try {
+        const Response = await fetch(`/api/stations/${encodeURIComponent(CurrentStationId)}/config/edit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stationConfig: StationConfig })
+        });
+        const Data = await Response.json().catch(() => ({}));
+        if (!Response.ok) throw new Error(Data.details || Data.error || `Save failed (${Response.status})`);
+        await RefreshConfig();
+        SetStationConfigEditorMode(false);
+        RenderRawConfig();
+    } catch (Error) {
+        SetStationConfigEditorStatus('invalid', Error.message || 'Failed to save station config.');
+    } finally {
+        EditorButtons.forEach(Button => { Button.disabled = false; });
+        EditorInput.disabled = false;
         EndRequest();
     }
 }
@@ -1956,12 +2528,45 @@ function RenderGamemodeConfig() {
             let Val = GetGenericValue(Num.key, Num.default);
             let Row = document.createElement('div');
             Row.className = 'control-row';
-            Row.innerHTML = `
-                <div class="control-info">
-                    <span>${Num.label}</span>
-                </div>
-                <input type="number" class="number-input" value="${Val}" onchange="UpdateGenericSetting('${Num.key}', parseInt(this.value, 10))">
-            `;
+            const Info = document.createElement('div');
+            Info.className = 'control-info';
+            const Label = document.createElement('span');
+            Label.textContent = Num.label;
+            Info.appendChild(Label);
+
+            const NumberControl = document.createElement('div');
+            NumberControl.className = 'number-input-control';
+            const Input = document.createElement('input');
+            Input.type = 'number';
+            Input.step = '1';
+            Input.className = 'number-input';
+            Input.value = Val;
+            Input.setAttribute('aria-label', Num.label);
+            Input.addEventListener('change', () => {
+                const NewValue = Number.parseInt(Input.value, 10);
+                if (Number.isFinite(NewValue)) {
+                    UpdateGenericSetting(Num.key, NewValue);
+                } else {
+                    Input.value = GetGenericValue(Num.key, Num.default);
+                }
+            });
+
+            const CreateStepButton = (Text, Direction) => {
+                const Button = document.createElement('button');
+                Button.type = 'button';
+                Button.className = 'number-input-step';
+                Button.textContent = Text;
+                Button.setAttribute('aria-label', `${Direction < 0 ? 'Decrease' : 'Increase'} ${Num.label}`);
+                Button.addEventListener('click', () => {
+                    if (Direction < 0) Input.stepDown();
+                    else Input.stepUp();
+                    Input.dispatchEvent(new Event('change', { bubbles: true }));
+                });
+                return Button;
+            };
+
+            NumberControl.append(CreateStepButton('<', -1), Input, CreateStepButton('>', 1));
+            Row.append(Info, NumberControl);
             GmCard.appendChild(Row);
         });
 

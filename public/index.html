@@ -47,6 +47,9 @@
                     <div>
                         <h2>Players</h2>
                     </div>
+                    <button id="online-players-refresh" class="button-secondary" type="button" aria-label="Refresh online players" title="Refresh online players">
+                        <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> Refresh
+                    </button>
                 </div>
                 <div class="player-search-container">
                     <div class="search-input-wrap">
@@ -54,6 +57,24 @@
                         <input type="text" id="player-search-input" class="text-input" placeholder="Search a player, group, or many players separated by comma" aria-describedby="player-search-hint">
                     </div>
                     <div id="player-search-results" class="search-results hidden"></div>
+                </div>
+                <div class="online-players-table-wrap">
+                    <table class="online-players-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Player</th>
+                                <th scope="col">Roles</th>
+                                <th scope="col" class="online-player-status-cell">
+                                    <span class="sr-only">Actions and status</span>
+                                    <div class="online-player-status-wrap">
+                                        <span id="online-players-status" class="online-players-status" role="status" aria-live="polite">Loading online players…</span>
+                                        <button id="missing-players-open" class="button-secondary missing-players-open hidden" type="button" onclick="OpenMissingPlayersModal()">Not found</button>
+                                    </div>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody id="online-players-body"></tbody>
+                    </table>
                 </div>
                 <div id="selected-player-container" class="hidden" style="margin-top: 1.5rem;">
                     <div class="selected-player-heading">
@@ -67,12 +88,16 @@
     </div>
 
     <div id="view-stations" class="view active">
-        <div class="page-heading">
-            <h1>Select a station</h1>
-            <p class="page-intro">These only include online and joinable stations</p>
+        <div class="page-heading stations-heading">
+            <div>
+                <h1>Select a station</h1>
+                <p class="page-intro">These only include online and joinable stations</p>
+            </div>
+            <button id="stations-refresh" class="button-secondary" type="button" onclick="RefreshStations()" aria-label="Refresh stations" title="Refresh stations">
+                <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> Refresh
+            </button>
         </div>
         <div id="station-list" class="grid">
-            <div class="card station-skeleton" aria-hidden="true"><span></span><span></span></div>
             <div class="card station-skeleton" aria-hidden="true"><span></span><span></span></div>
             <div class="card station-skeleton" aria-hidden="true"><span></span><span></span></div>
         </div>
@@ -94,6 +119,56 @@
     </div>
 
     <div id="view-station" class="view">
+        <div class="station-page-skeleton" aria-hidden="true">
+            <div class="station-skeleton-topbar">
+                <span class="skeleton-block skeleton-back"></span>
+                <div class="station-skeleton-heading">
+                    <span class="skeleton-block skeleton-station-name"></span>
+                    <span class="skeleton-block skeleton-region"></span>
+                </div>
+                <span class="skeleton-block skeleton-refresh"></span>
+            </div>
+            <div class="station-skeleton-grid">
+                <div class="station-skeleton-left">
+                    <section class="panel-section station-skeleton-section">
+                        <span class="skeleton-block skeleton-section-title"></span>
+                        <span class="skeleton-block skeleton-setting-row"></span>
+                        <span class="skeleton-block skeleton-setting-row"></span>
+                        <span class="skeleton-block skeleton-setting-row"></span>
+                    </section>
+                    <section class="panel-section station-skeleton-section">
+                        <span class="skeleton-block skeleton-section-title"></span>
+                        <span class="skeleton-block skeleton-setting-row"></span>
+                        <span class="skeleton-block skeleton-setting-row"></span>
+                    </section>
+                    <section class="panel-section station-skeleton-section">
+                        <span class="skeleton-block skeleton-section-title"></span>
+                        <span class="skeleton-block skeleton-mode-card"></span>
+                        <span class="skeleton-block skeleton-mode-card"></span>
+                    </section>
+                    <section class="panel-section station-skeleton-section">
+                        <span class="skeleton-block skeleton-section-title"></span>
+                        <span class="skeleton-block skeleton-weekly-row"></span>
+                        <span class="skeleton-block skeleton-weekly-row"></span>
+                        <span class="skeleton-block skeleton-weekly-action"></span>
+                    </section>
+                </div>
+                <span class="station-skeleton-divider"></span>
+                <section class="panel-section station-skeleton-config">
+                    <span class="skeleton-block skeleton-config-title"></span>
+                    <span class="skeleton-block skeleton-code-line"></span>
+                    <span class="skeleton-block skeleton-code-line"></span>
+                    <span class="skeleton-block skeleton-code-line"></span>
+                    <span class="skeleton-block skeleton-code-line"></span>
+                    <span class="skeleton-block skeleton-code-line"></span>
+                    <span class="skeleton-block skeleton-code-line"></span>
+                    <span class="skeleton-block skeleton-code-line"></span>
+                    <span class="skeleton-block skeleton-code-line"></span>
+                    <span class="skeleton-block skeleton-code-line"></span>
+                    <span class="skeleton-block skeleton-code-line"></span>
+                </section>
+            </div>
+        </div>
         <div class="topbar">
             <button class="button-secondary back-button" type="button" aria-label="Change station" title="Change station" onclick="ShowStations()">
                 <i class="fa-solid fa-arrow-left" aria-hidden="true"></i>
@@ -152,11 +227,23 @@
                 <div class="code-panel">
                     <div class="code-heading">
                         <div>
-                            <p class="eyebrow">Read-only</p>
+                            <p id="config-mode-label" class="eyebrow">Read-only</p>
                             <h2>Config</h2>
+                        </div>
+                        <div class="config-heading-actions">
+                            <button id="config-edit-button" class="button-secondary" type="button" onclick="OpenStationConfigEditor()">Edit</button>
+                            <div id="config-editor-actions" class="config-editor-actions hidden">
+                                <button class="button-secondary" type="button" onclick="RefreshStationConfigEditor()">Refresh Config</button>
+                                <button type="button" onclick="SaveStationConfigEditor()">Save</button>
+                                <button class="button-secondary" type="button" onclick="CloseStationConfigEditor()">Close</button>
+                            </div>
                         </div>
                     </div>
                     <pre id="raw-config"></pre>
+                    <div id="station-config-editor" class="station-config-editor hidden">
+                        <textarea id="station-config-input" spellcheck="false" aria-label="Station config JSON"></textarea>
+                        <div id="station-config-status" class="station-config-status" role="status" aria-live="polite"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -205,6 +292,22 @@
             <div class="modal-footer">
                 <button class="button-secondary" onclick="CloseConfirmModalAction()">Cancel</button>
                 <button onclick="ConfirmModalAction()">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="station-config-discard-modal" class="modal-backdrop" aria-hidden="true" onclick="HandleStationConfigDiscardBackdropClick(event)">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="station-config-discard-title" aria-describedby="station-config-discard-message">
+            <div class="modal-header">
+                <h3 id="station-config-discard-title">Are you sure?</h3>
+                <button class="modal-close" type="button" aria-label="Keep editing" onclick="CloseStationConfigDiscardModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="station-config-discard-message">Going back will discard your changes!</p>
+            </div>
+            <div class="modal-footer">
+                <button id="station-config-discard-cancel" class="button-secondary" type="button" onclick="CloseStationConfigDiscardModal()">Keep editing</button>
+                <button type="button" class="danger-button" onclick="ConfirmStationConfigDiscard()">Leave</button>
             </div>
         </div>
     </div>
@@ -303,13 +406,38 @@
     </div>
 
     <div id="role-info-modal" class="modal-backdrop" onclick="HandleRoleInfoBackdropClick(event)">
-        <div class="modal-card">
+        <div class="modal-card role-details-card">
             <div class="modal-header">
-                <h3 id="role-info-title">Role permissions</h3>
+                <h3 id="role-info-title">Role details</h3>
                 <button class="modal-close" onclick="CloseRoleInfoModal()">&times;</button>
             </div>
             <div class="modal-body">
-                <ul id="role-info-permissions" class="role-info-permissions"></ul>
+                <section class="role-detail-section">
+                    <p id="role-info-description" class="role-info-description"></p>
+                </section>
+                <section class="role-detail-section">
+                    <h4>Permissions</h4>
+                    <div id="role-info-permissions" class="role-info-permissions"></div>
+                </section>
+                <section class="role-detail-section">
+                    <h4>Players with this role in the current list</h4>
+                    <div id="role-info-members" class="role-info-members"></div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <div id="missing-players-modal" class="modal-backdrop" onclick="HandleMissingPlayersBackdropClick(event)">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="missing-players-title">
+            <div class="modal-header">
+                <h3 id="missing-players-title">Players not found</h3>
+                <button class="modal-close" type="button" aria-label="Close" onclick="CloseMissingPlayersModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <ul id="missing-players-list" class="missing-players-list"></ul>
+            </div>
+            <div class="modal-footer">
+                <button class="button-secondary" type="button" onclick="CloseMissingPlayersModal()">Close</button>
             </div>
         </div>
     </div>

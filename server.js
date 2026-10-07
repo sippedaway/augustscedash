@@ -409,6 +409,67 @@ app.get('/api/stations/:id/config', requireAuth, async (req, res) => {
     }
 });
 
+app.post('/api/stations/:id/config/edit', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { stationConfig } = req.body;
+        if (!stationConfig || typeof stationConfig !== 'object' || Array.isArray(stationConfig)) {
+            return res.status(400).json({ error: 'Station config must be a JSON object.' });
+        }
+
+        const entries = Object.entries(stationConfig);
+        const invalidKey = entries.find(([key]) => !validateKey(key));
+        if (invalidKey) {
+            return res.status(403).json({ error: `Unauthorized or unsupported station config key: ${invalidKey[0]}` });
+        }
+
+        const cleanStationConfig = Object.fromEntries(entries.map(([key, value]) => [
+            key,
+            typeof value === 'string' ? value : (typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value))
+        ]));
+        if (!validateSpawnPointUpdate({ stationUpdates: cleanStationConfig })) {
+            return res.status(403).json({ error: 'Invalid spawn point configuration. Use a supported spawn preset.' });
+        }
+
+        for (const [key, value] of Object.entries(cleanStationConfig)) {
+            if (isWhitelistPlayerListKey(key) && !await validateWhitelist(value)) {
+                return res.status(403).json({ error: 'Whitelisted players must exist in odgroups.' });
+            }
+        }
+
+        const currentResponse = await requestApi(`${API_BASE}/v2/stations/${id}/config?include_fleet_config=false`, {
+            headers: getHeaders(req)
+        });
+        const currentConfig = await currentResponse.json();
+        const currentStationConfig = currentConfig && typeof currentConfig === 'object' && !Array.isArray(currentConfig)
+            ? currentConfig
+            : {};
+        const stationDeletes = Object.keys(currentStationConfig).filter(key =>
+            validateKey(key) && !Object.prototype.hasOwnProperty.call(cleanStationConfig, key)
+        );
+        const stationUpdates = Object.fromEntries(Object.entries(cleanStationConfig).filter(([key, value]) => currentStationConfig[key] !== value));
+
+        if (stationDeletes.length > 0) {
+            await requestApi(`${API_BASE}/v2/stations/${id}/config`, {
+                method: 'DELETE',
+                headers: getHeaders(req),
+                body: JSON.stringify(stationDeletes)
+            });
+        }
+        if (Object.keys(stationUpdates).length > 0) {
+            await requestApi(`${API_BASE}/v2/stations/${id}/config`, {
+                method: 'POST',
+                headers: getHeaders(req),
+                body: JSON.stringify(stationUpdates)
+            });
+        }
+
+        res.json({ success: true, updated: Object.keys(stationUpdates).length, deleted: stationDeletes.length });
+    } catch (error) {
+        sendOrionError(res, 'Editing station config', error);
+    }
+});
+
 app.get('/api/fleet/config', requireAuth, async (req, res) => {
     try {
         const response = await requestApi(`${API_BASE}/v1/fleets/${FLEET_ID}/config`, { headers: getHeaders(req) });
@@ -532,6 +593,16 @@ app.get('/api/players/search', playerSearchLimiter, requireAuth, async (req, res
         res.json(data);
     } catch (error) {
         sendOrionError(res, 'Searching players', error);
+    }
+});
+
+app.get('/api/players/online', playerSearchLimiter, requireAuth, async (req, res) => {
+    try {
+        const response = await requestApi(`${API_BASE}/v3/fleets/${FLEET_ID}/users?include_roles=true&page_size=16&page=1`, { headers: getHeaders(req) });
+        const data = await response.json();
+        res.json(data);
+    } catch (error) {
+        sendOrionError(res, 'Fetching online players', error);
     }
 });
 
