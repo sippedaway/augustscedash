@@ -349,21 +349,37 @@
     </div>
 
     <div id="edit-group-modal" class="modal-backdrop" onclick="HandleEditGroupBackdropClick(event)">
-        <div class="modal-card">
+        <div class="modal-card edit-group-modal-card">
             <div class="modal-header">
-                <h3>Edit Group</h3>
+                <div>
+                    <h3>Edit Group</h3>
+                </div>
                 <button class="modal-close" onclick="CloseEditGroupModal()">&times;</button>
             </div>
-            <div class="modal-body">
-                <input type="text" id="edit-group-name" class="text-input" placeholder="Group Name" style="margin-bottom: 1rem;">
-                <div class="player-search-container">
-                    <div class="search-input-wrap">
-                        <i class="fa-solid fa-magnifying-glass search-input-icon" aria-hidden="true"></i>
-                        <input type="text" id="edit-group-player-search" class="text-input" placeholder="Search players to add...">
+            <div class="edit-group-name-field">
+                <label for="edit-group-name">Group name</label>
+                <input type="text" id="edit-group-name" class="text-input" placeholder="Group name">
+            </div>
+            <div class="edit-group-columns">
+                <section class="edit-group-panel edit-group-add-panel">
+                    <div class="edit-group-panel-heading">
+                        <h4>Add players</h4>
                     </div>
-                    <div id="edit-group-player-search-results" class="search-results hidden"></div>
-                </div>
-                <div id="edit-group-players" class="roles-container" style="margin-top: 1rem;"></div>
+                    <div class="player-search-container">
+                        <div class="search-input-wrap">
+                            <i class="fa-solid fa-magnifying-glass search-input-icon" aria-hidden="true"></i>
+                            <input type="text" id="edit-group-player-search" class="text-input" placeholder="Name or comma-separated names..." autocomplete="off">
+                        </div>
+                        <div id="edit-group-player-search-results" class="search-results edit-group-search-results hidden" aria-live="polite"></div>
+                    </div>
+                </section>
+                <section class="edit-group-panel edit-group-roster-panel">
+                    <div class="edit-group-panel-heading">
+                        <h4>Players in group</h4>
+                        <span id="edit-group-player-count">0 players</span>
+                    </div>
+                    <div id="edit-group-players" class="edit-group-player-list"></div>
+                </section>
             </div>
             <div class="modal-footer">
                 <button class="button-secondary" onclick="CloseEditGroupModal()">Cancel</button>

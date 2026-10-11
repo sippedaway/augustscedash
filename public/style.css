@@ -2504,3 +2504,206 @@ summary:focus-visible {
     color: var(--text-muted);
     white-space: nowrap;
 }
+
+.edit-group-modal-card {
+    display: flex;
+    flex-direction: column;
+    width: min(900px, calc(100vw - 2rem));
+    max-width: 900px;
+    height: min(680px, calc(100vh - 2rem));
+    padding: 1.5rem;
+}
+
+.edit-group-modal-card .modal-header {
+    flex: 0 0 auto;
+    margin-bottom: 1rem;
+}
+
+.edit-group-modal-card .modal-header h3 {
+    margin: 0;
+    font-size: 1.2rem;
+}
+
+.edit-group-modal-subtitle {
+    margin: 0.3rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+}
+
+.edit-group-name-field {
+    display: grid;
+    flex: 0 0 auto;
+    gap: 0.4rem;
+    margin-bottom: 1rem;
+}
+
+.edit-group-name-field label,
+.edit-group-panel-heading h4 {
+    color: var(--text);
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.edit-group-columns {
+    display: grid;
+    flex: 1 1 auto;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    gap: 1rem;
+    min-height: 0;
+}
+
+.edit-group-panel {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface-inset);
+}
+
+.edit-group-panel-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.85rem;
+}
+
+.edit-group-panel-heading h4 {
+    margin: 0;
+    font-size: 0.9rem;
+}
+
+.edit-group-panel-heading > span {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    text-align: right;
+}
+
+.edit-group-add-panel .player-search-container {
+    min-height: 0;
+}
+
+.edit-group-add-panel .text-input {
+    min-height: 2.8rem;
+    border-radius: 7px;
+}
+
+.edit-group-add-panel .text-input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12);
+}
+
+.edit-group-search-hint {
+    margin: 0.65rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    line-height: 1.5;
+}
+
+.edit-group-search-results:not(.hidden) {
+    position: relative;
+    inset: auto;
+    max-height: 300px;
+    margin-top: 0.75rem;
+    border-radius: 7px;
+    box-shadow: none;
+}
+
+.edit-group-search-results .search-result-item {
+    padding: 0.7rem 0.8rem;
+    font-size: 0.85rem;
+}
+
+.edit-group-lookup-status {
+    padding: 0.8rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.edit-group-player-list {
+    display: grid;
+    align-content: start;
+    gap: 0.45rem;
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding-right: 0.2rem;
+}
+
+.edit-group-player-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-height: 2.65rem;
+    padding: 0.45rem 0.65rem 0.45rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface-raised);
+    color: var(--text);
+    font-size: 0.83rem;
+}
+
+.edit-group-player-item > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.edit-group-player-item .role-remove {
+    display: grid;
+    width: 1.8rem;
+    height: 1.8rem;
+    flex: 0 0 auto;
+    place-items: center;
+    border-radius: 6px;
+    color: var(--text-muted);
+}
+
+.edit-group-player-item .role-remove:hover {
+    background: rgba(255, 85, 85, 0.12);
+    color: #ff6b6b;
+}
+
+.edit-group-player-empty {
+    display: grid;
+    min-height: 7rem;
+    place-items: center;
+    padding: 1rem;
+    border: 1px dashed var(--border-strong);
+    border-radius: 7px;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    text-align: center;
+}
+
+.edit-group-modal-card .modal-footer {
+    flex: 0 0 auto;
+    margin-top: 1rem;
+}
+
+@media (max-width: 640px) {
+    .edit-group-modal-card {
+        width: calc(100vw - 1rem);
+        height: calc(100vh - 1rem);
+        padding: 1rem;
+    }
+
+    .edit-group-columns {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: minmax(0, 0.8fr) minmax(0, 1.2fr);
+        gap: 0.75rem;
+    }
+
+    .edit-group-panel {
+        padding: 0.8rem;
+    }
+
+    .edit-group-search-results:not(.hidden) {
+        max-height: 140px;
+    }
+}

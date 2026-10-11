@@ -373,9 +373,15 @@ function AddPendingGroupPlayer(Id, Username) {
 
 let EditingGroupId = null;
 let GroupToDelete = null;
+let EditGroupLookupGeneration = 0;
+let EditGroupBulkLookupPromise = Promise.resolve();
+let EditGroupBulkLookupKey = null;
+const EditGroupBulkSearchDelay = 1000;
 
 function OpenEditGroupModal(Group) {
     EditingGroupId = Group.id;
+    EditGroupBulkLookupPromise = Promise.resolve();
+    EditGroupBulkLookupKey = null;
     PendingGroupPlayers = [...Group.players];
     document.getElementById('edit-group-name').value = Group.label;
     document.getElementById('edit-group-player-search').value = '';
@@ -385,6 +391,7 @@ function OpenEditGroupModal(Group) {
 }
 
 function CloseEditGroupModal() {
+    EditGroupLookupGeneration += 1;
     document.getElementById('edit-group-modal').classList.remove('active');
     EditingGroupId = null;
 }
@@ -397,10 +404,20 @@ function HandleEditGroupBackdropClick(Event) {
 
 function RenderEditGroupPlayers() {
     let Container = document.getElementById('edit-group-players');
+    let Count = document.getElementById('edit-group-player-count');
     Container.innerHTML = '';
+    if (Count) Count.textContent = `${PendingGroupPlayers.length} player${PendingGroupPlayers.length === 1 ? '' : 's'}`;
+    if (PendingGroupPlayers.length === 0) {
+        let Empty = document.createElement('div');
+        Empty.className = 'edit-group-player-empty';
+        Empty.textContent = 'No players in this group yet. Search and add players to get started.';
+        Container.appendChild(Empty);
+        return;
+    }
+
     PendingGroupPlayers.forEach(P => {
         let Tag = document.createElement('div');
-        Tag.className = 'role-tag';
+        Tag.className = 'edit-group-player-item';
         let Username = document.createElement('span');
         Username.textContent = P.username;
         let RemoveButton = document.createElement('button');
@@ -426,7 +443,78 @@ function AddEditGroupPlayer(Id, Username) {
     document.getElementById('edit-group-player-search').value = '';
 }
 
+async function ResolveEditGroupPlayers(Usernames, LookupGeneration, SubmittedQuery) {
+    const SearchInput = document.getElementById('edit-group-player-search');
+    const ResultsContainer = document.getElementById('edit-group-player-search-results');
+    const SetLookupStatus = Message => {
+        ResultsContainer.innerHTML = '';
+        const Status = document.createElement('div');
+        Status.className = 'edit-group-lookup-status';
+        Status.textContent = Message;
+        ResultsContainer.appendChild(Status);
+        ResultsContainer.classList.remove('hidden');
+    };
+    SetLookupStatus(`Looking up ${Usernames.length} players…`);
+
+    let AddedCount = 0;
+    const MissingUsernames = [];
+    for (let Index = 0; Index < Usernames.length; Index++) {
+        if (LookupGeneration !== EditGroupLookupGeneration) return;
+        const Username = Usernames[Index];
+        SetLookupStatus(`Looking up player ${Index + 1} of ${Usernames.length}: ${Username}`);
+        try {
+            const Response = await fetch('/api/players/search?q=' + encodeURIComponent(Username));
+            const Data = await Response.json();
+            if (LookupGeneration !== EditGroupLookupGeneration) return;
+            const Match = (Data.items || []).find(Player =>
+                String(Player.username || '').toLowerCase() === Username.toLowerCase()
+            );
+
+            if (Match) {
+                if (!PendingGroupPlayers.some(Player => Player.id === Match.user_id)) {
+                    PendingGroupPlayers.push({ id: Match.user_id, username: Match.username });
+                    AddedCount += 1;
+                    RenderEditGroupPlayers();
+                }
+            } else {
+                MissingUsernames.push(Username);
+            }
+        } catch (Error) {
+            if (LookupGeneration !== EditGroupLookupGeneration) return;
+            console.error(`Player lookup failed for ${Username}:`, Error);
+            MissingUsernames.push(Username);
+        }
+
+        if (Index < Usernames.length - 1) await Delay(1100);
+    }
+
+    if (LookupGeneration !== EditGroupLookupGeneration) return;
+    const MissingSummary = MissingUsernames.length
+        ? ` Not found: ${MissingUsernames.join(', ')}.`
+        : '';
+    SetLookupStatus(`Added ${AddedCount} player${AddedCount === 1 ? '' : 's'}.${MissingSummary}`);
+    if (SearchInput.value.trim() === SubmittedQuery) SearchInput.value = '';
+}
+
+function ResolveBulkEditInput(LookupGeneration = EditGroupLookupGeneration) {
+    const SearchInput = document.getElementById('edit-group-player-search');
+    const SubmittedQuery = SearchInput.value.trim();
+    const Usernames = SubmittedQuery.split(',').map(Username => Username.trim()).filter(Boolean);
+    if (!SubmittedQuery.includes(',') || Usernames.length < 2 || LookupGeneration !== EditGroupLookupGeneration) return;
+    clearTimeout(GroupSearchTimeout);
+    const LookupKey = `${LookupGeneration}:${SubmittedQuery}`;
+    if (EditGroupBulkLookupKey === LookupKey) return EditGroupBulkLookupPromise;
+    EditGroupBulkLookupKey = LookupKey;
+    EditGroupBulkLookupPromise = ResolveEditGroupPlayers(Usernames, LookupGeneration, SubmittedQuery);
+    return EditGroupBulkLookupPromise;
+}
+
 async function SaveEditedGroup() {
+    const SearchInput = document.getElementById('edit-group-player-search');
+    if (SearchInput.value.includes(',')) {
+        ResolveBulkEditInput();
+    }
+    await EditGroupBulkLookupPromise;
     let Name = document.getElementById('edit-group-name').value.trim();
     if (!Name || PendingGroupPlayers.length === 0 || !EditingGroupId) return;
     BeginRequest();
@@ -600,17 +688,33 @@ document.addEventListener('DOMContentLoaded', () => {
     if (EditGroupSearchInput) {
         EditGroupSearchInput.addEventListener('input', function(E) {
             clearTimeout(GroupSearchTimeout);
+            const LookupGeneration = ++EditGroupLookupGeneration;
             let Query = E.target.value.trim();
             let ResultsContainer = document.getElementById('edit-group-player-search-results');
+
+            if (Query.includes(',')) {
+                ResultsContainer.classList.add('hidden');
+                const Usernames = Query.split(',').map(Username => Username.trim()).filter(Boolean);
+                if (Usernames.length >= 2) {
+                    GroupSearchTimeout = setTimeout(
+                        () => ResolveBulkEditInput(LookupGeneration),
+                        EditGroupBulkSearchDelay
+                    );
+                }
+                return;
+            }
             
             if (Query.length === 0) {
                 ResultsContainer.classList.add('hidden');
                 return;
             }
 
+            ResultsContainer.classList.add('hidden');
+
             GroupSearchTimeout = setTimeout(async () => {
                 let Res = await fetch('/api/players/search?q=' + encodeURIComponent(Query));
                 let Data = await Res.json();
+                if (LookupGeneration !== EditGroupLookupGeneration) return;
                 
                 ResultsContainer.innerHTML = '';
                 if (Data.items && Data.items.length > 0) {
@@ -2353,7 +2457,8 @@ function RenderGamemodeConfig() {
             ],
             numbers: [
                 { label: "Max Team 0 Size", key: "loadedgamemodes.tkb_prime.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.0", default: 3 },
-                { label: "Max Team 1 Size", key: "loadedgamemodes.tkb_prime.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 3 }
+                { label: "Max Team 1 Size", key: "loadedgamemodes.tkb_prime.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 3 },
+                { label: "Match Length (sec)", key: "loadedgamemodes.tkb_prime.modulestate.dashboardconfigoverrides.matchlengthseconds", default: 300 }
             ]
         },
         {
@@ -2367,7 +2472,8 @@ function RenderGamemodeConfig() {
             ],
             numbers: [
                 { label: "Max Team 0 Size", key: "loadedgamemodes.tkb_plazawest.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.0", default: 3 },
-                { label: "Max Team 1 Size", key: "loadedgamemodes.tkb_plazawest.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 3 }
+                { label: "Max Team 1 Size", key: "loadedgamemodes.tkb_plazawest.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 3 },
+                { label: "Match Length (sec)", key: "loadedgamemodes.tkb_plazawest.modulestate.dashboardconfigoverrides.matchlengthseconds", default: 300 }
             ]
         },
         {
@@ -2381,7 +2487,8 @@ function RenderGamemodeConfig() {
             ],
             numbers: [
                 { label: "Max Team 0 Size", key: "loadedgamemodes.tkb_plazaeast.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.0", default: 3 },
-                { label: "Max Team 1 Size", key: "loadedgamemodes.tkb_plazaeast.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 3 }
+                { label: "Max Team 1 Size", key: "loadedgamemodes.tkb_plazaeast.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 3 },
+                { label: "Match Length (sec)", key: "loadedgamemodes.tkb_plazaeast.modulestate.dashboardconfigoverrides.matchlengthseconds", default: 300 }
             ]
         },
         {
@@ -2395,7 +2502,8 @@ function RenderGamemodeConfig() {
             ],
             numbers: [
                 { label: "Max Team 0 Size", key: "loadedgamemodes.driftball west 01.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.0", default: 4 },
-                { label: "Max Team 1 Size", key: "loadedgamemodes.driftball west 01.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 4 }
+                { label: "Max Team 1 Size", key: "loadedgamemodes.driftball west 01.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 4 },
+                { label: "Match Length (sec)", key: "loadedgamemodes.driftball west 01.modulestate.dashboardconfigoverrides.matchlengthseconds", default: 300 }
             ]
         },
         {
@@ -2409,7 +2517,8 @@ function RenderGamemodeConfig() {
             ],
             numbers: [
                 { label: "Max Team 0 Size", key: "loadedgamemodes.driftball east 01.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.0", default: 4 },
-                { label: "Max Team 1 Size", key: "loadedgamemodes.driftball east 01.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 4 }
+                { label: "Max Team 1 Size", key: "loadedgamemodes.driftball east 01.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 4 },
+                { label: "Match Length (sec)", key: "loadedgamemodes.driftball east 01.modulestate.dashboardconfigoverrides.matchlengthseconds", default: 300 }
             ]
         },
         {
@@ -2420,7 +2529,8 @@ function RenderGamemodeConfig() {
             ],
             numbers: [
                 { label: "Max Team 0 Size", key: "loadedgamemodes.czg_zdrift_beta.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.0", default: 4 },
-                { label: "Max Team 1 Size", key: "loadedgamemodes.czg_zdrift_beta.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 4 }
+                { label: "Max Team 1 Size", key: "loadedgamemodes.czg_zdrift_beta.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 4 },
+                { label: "Match Length (sec)", key: "loadedgamemodes.czg_zdrift_beta.modulestate.dashboardconfigoverrides.matchlengthseconds", default: 300 }
             ]
         },
         {
@@ -2431,7 +2541,8 @@ function RenderGamemodeConfig() {
             ],
             numbers: [
                 { label: "Max Team 0 Size", key: "loadedgamemodes.czg_zdrift_alpha.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.0", default: 4 },
-                { label: "Max Team 1 Size", key: "loadedgamemodes.czg_zdrift_alpha.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 4 }
+                { label: "Max Team 1 Size", key: "loadedgamemodes.czg_zdrift_alpha.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 4 },
+                { label: "Match Length (sec)", key: "loadedgamemodes.czg_zdrift_alpha.modulestate.dashboardconfigoverrides.matchlengthseconds", default: 300 }
             ]
         },
         {
@@ -2442,7 +2553,8 @@ function RenderGamemodeConfig() {
             ],
             numbers: [
                 { label: "Max Team 0 Size", key: "loadedgamemodes.czg_zdrift_gamma.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.0", default: 4 },
-                { label: "Max Team 1 Size", key: "loadedgamemodes.czg_zdrift_gamma.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 4 }
+                { label: "Max Team 1 Size", key: "loadedgamemodes.czg_zdrift_gamma.modulestate.dashboardconfigoverrides.ticketmanagersettings.maxteamsizes.1", default: 4 },
+                { label: "Match Length (sec)", key: "loadedgamemodes.czg_zdrift_gamma.modulestate.dashboardconfigoverrides.matchlengthseconds", default: 300 }
             ]
         },
         {
