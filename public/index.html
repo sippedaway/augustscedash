@@ -348,6 +348,21 @@
         </div>
     </div>
 
+    <div id="role-assignment-error-modal" class="modal-backdrop" role="presentation" onclick="HandleRoleAssignmentErrorBackdropClick(event)">
+        <div class="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="role-assignment-error-title" aria-describedby="role-assignment-error-message">
+            <div class="modal-header">
+                <h3 id="role-assignment-error-title">Error! Can't give this role</h3>
+                <button class="modal-close" type="button" aria-label="Close" onclick="CloseRoleAssignmentErrorModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="role-assignment-error-message"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="button-secondary" type="button" onclick="CloseRoleAssignmentErrorModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <div id="edit-group-modal" class="modal-backdrop" onclick="HandleEditGroupBackdropClick(event)">
         <div class="modal-card edit-group-modal-card">
             <div class="modal-header">

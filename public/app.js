@@ -13,7 +13,8 @@ const NativeFetch = window.fetch.bind(window);
 window.fetch = async (...Arguments) => {
     const Response = await NativeFetch(...Arguments);
     if (Response.status === 401 && !window.location.pathname.endsWith('/setup.html')) {
-        window.location.href = '/setup.html';
+        const AuthError = await Response.clone().json().catch(() => null);
+        if (AuthError?.code === 'AUTH_REQUIRED') window.location.replace('/setup.html');
     }
     return Response;
 };
@@ -94,10 +95,7 @@ async function Init() {
     BeginRequest();
     try {
         var AuthRes = await fetch('/api/me');
-        if (!AuthRes.ok) {
-            window.location.href = '/setup.html';
-            return;
-        }
+        if (!AuthRes.ok) return;
         await AuthRes.json();
     } finally {
         EndRequest();
@@ -1080,7 +1078,22 @@ function RenderPlayersTable(Players, IsGroup = false) {
                     RoleItem.append(Badge, RemoveButton);
                     RolesCell.appendChild(RoleItem);
                 } else {
-                    RolesCell.appendChild(Badge);
+                    const RoleItem = document.createElement('span');
+                    RoleItem.className = 'online-player-role-item';
+                    const RemoveButton = document.createElement('button');
+                    RemoveButton.type = 'button';
+                    RemoveButton.className = 'online-role-remove button-secondary';
+                    RemoveButton.textContent = '×';
+                    RemoveButton.disabled = !Role.role_id;
+                    RemoveButton.title = `Remove ${RoleName} from ${Player.username}`;
+                    RemoveButton.setAttribute('aria-label', `Remove ${RoleName} from ${Player.username}`);
+                    RemoveButton.addEventListener('click', () => OpenRoleRemoveModal(
+                        Role.role_id,
+                        RoleName,
+                        [{ id: Player.id || Player.user_id, username: Player.username }]
+                    ));
+                    RoleItem.append(Badge, RemoveButton);
+                    RolesCell.appendChild(RoleItem);
                 }
             });
         }
@@ -1100,11 +1113,12 @@ function RenderPlayersTable(Players, IsGroup = false) {
     });
 }
 
-async function RefreshOnlinePlayers() {
+async function RefreshOnlinePlayers(ForceRoleRefreshIds = []) {
     const Status = document.getElementById('online-players-status');
     const Body = document.getElementById('online-players-body');
     if (!Status || !Body || CurrentPlayersViewMode !== 'online') return;
 
+    const ForceRoleRefreshIdSet = new Set(ForceRoleRefreshIds.map(Id => String(Id)));
     const RequestGeneration = ++OnlinePlayersRefreshGeneration;
     CurrentSelectionIsGroup = false;
     UpdateMissingPlayerNames([]);
@@ -1125,7 +1139,9 @@ async function RefreshOnlinePlayers() {
         });
 
         const PlayersWithRoles = await Promise.all(OnlinePlayers.map(async Player => {
-            if (Array.isArray(Player.roles)) return { ...Player, roles: Player.roles };
+            if (Array.isArray(Player.roles) && !ForceRoleRefreshIdSet.has(String(Player.user_id))) {
+                return { ...Player, roles: Player.roles };
+            }
             try {
                 const RolesResponse = await fetch(`/api/players/${encodeURIComponent(Player.user_id)}/roles`);
                 const RolesData = await RolesResponse.json();
@@ -1319,6 +1335,27 @@ function HandleRoleModalBackdropClick(Event) {
     }
 }
 
+function OpenRoleAssignmentErrorModal(Message) {
+    const Modal = document.getElementById('role-assignment-error-modal');
+    const MessageElement = document.getElementById('role-assignment-error-message');
+    if (!Modal || !MessageElement) {
+        alert(Message);
+        return;
+    }
+    MessageElement.textContent = Message;
+    Modal.classList.add('active');
+}
+
+function CloseRoleAssignmentErrorModal() {
+    document.getElementById('role-assignment-error-modal')?.classList.remove('active');
+}
+
+function HandleRoleAssignmentErrorBackdropClick(Event) {
+    if (Event.target && Event.target.id === 'role-assignment-error-modal') {
+        CloseRoleAssignmentErrorModal();
+    }
+}
+
 async function FetchWithRetry(Url, Options = {}, MaxRetries = 3) {
     for (let Attempt = 0; Attempt < MaxRetries; Attempt++) {
         let Res = await fetch(Url, Options);
@@ -1464,6 +1501,7 @@ async function RemovePlayerRole(RoleId) {
 
     try {
         let errors = [];
+        let PermissionError = null;
         for (let i = 0; i < ActiveRoleTargets.length; i++) {
             let Target = ActiveRoleTargets[i];
             Status.textContent = `${i + 1}/${ActiveRoleTargets.length} ${Target.username}`;
@@ -1496,32 +1534,49 @@ async function AddPlayerRole(RoleId) {
     CloseAddRoleModal();
     BeginRequest();
     const Status = document.getElementById('online-players-status');
+    const Targets = [...ActiveRoleTargets];
+    const AssignmentViewMode = CurrentPlayersViewMode;
+    let PermissionError = null;
 
     try {
         let errors = [];
-        for (let i = 0; i < ActiveRoleTargets.length; i++) {
-            let Target = ActiveRoleTargets[i];
-            Status.textContent = `${i + 1}/${ActiveRoleTargets.length} ${Target.username}`;
+        for (let i = 0; i < Targets.length; i++) {
+            let Target = Targets[i];
+            Status.textContent = `${i + 1}/${Targets.length} ${Target.username}`;
             
             let Res = await FetchWithRetry(`/api/players/${Target.id}/roles/${RoleId}`, { method: 'POST' });
             
             if (!Res.ok) {
                 let ErrorData = await Res.json().catch(() => ({}));
-                errors.push(`${Target.username}: ${ErrorData.error || 'Failed to assign role'}`);
+                const ErrorMessage = ErrorData.error || 'Failed to assign role';
+                if (Res.status === 403) {
+                    PermissionError = ErrorMessage;
+                    break;
+                }
+                errors.push(`${Target.username}: ${ErrorMessage}`);
             }
             await Delay(300);
         }
-        
+
+        if (PermissionError) {
+            OpenRoleAssignmentErrorModal(`You can't give out this role. ${PermissionError}`);
+        }
         if (errors.length > 0) {
             alert('Error assigning role:\n\n' + errors.join('\n'));
         }
         
-        if (CurrentPlayersViewMode === 'online') {
+        if (AssignmentViewMode === 'online' && CurrentPlayersViewMode === 'online') {
             OnlineRoleTargetId = null;
-            await RefreshOnlinePlayers();
-        } else {
+            await RefreshOnlinePlayers(Targets.map(Target => Target.id));
+        } else if (AssignmentViewMode === 'selection' && CurrentPlayersViewMode === 'selection') {
             ActiveRoleTargets = [...CurrentSelectionTargets];
             await LoadPlayerRoles();
+        }
+    } catch (Error) {
+        console.error('Role assignment or refresh failed:', Error);
+        if (Status && /^\d+\/\d+\s/.test(Status.textContent)) {
+            Status.textContent = 'Role update failed. Refresh players to check the result.';
+            Status.classList.add('is-error');
         }
     } finally {
         EndRequest();
@@ -3094,11 +3149,12 @@ async function FixKoth() {
     await SendUpdate({ StationUpdates: StationUpdates });
 }
 
-function Logout() {
-    document.cookie.split(";").forEach(function(c) {
-        document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
-    });
-    window.location.href = '/setup.html';
+async function Logout() {
+    try {
+        await NativeFetch('/api/auth/logout', { method: 'POST' });
+    } finally {
+        window.location.replace('/setup.html');
+    }
 }
 
 const AvailableThemes = ['lime', 'ocean', 'violet', 'sunset'];

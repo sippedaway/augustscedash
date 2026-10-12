@@ -61,8 +61,7 @@ const ALLOWED_ROLE_PERMISSIONS = new Set([
     'user_warn',
     'user_ban_short:write',
     'fleet:read',
-    'user_mute',
-    'vip:join'
+    'user_mute'
 ]);
 const ALLOWED_EXACT_KEYS = [
     'config.player.enableThrusters',
@@ -185,8 +184,24 @@ function decryptApiKey(value) {
     ]).toString('utf8');
 }
 
-app.get('/setup.html', (req, res) => {
+const sendSetupPage = (req, res) => {
     res.sendFile(require('path').join(__dirname, 'public', 'setup.html'));
+};
+
+function isInvalidSession(error) {
+    return error?.code === 'INVALID_SESSION';
+}
+
+app.get('/setup.html', async (req, res, next) => {
+    if (!req.cookies.auth_token) return sendSetupPage(req, res);
+    try {
+        await getSessionUser(req.cookies.auth_token);
+        return res.redirect('/');
+    } catch (error) {
+        if (!isInvalidSession(error)) return next(error);
+        res.clearCookie('auth_token', getCookieOptions(req));
+        return sendSetupPage(req, res);
+    }
 });
 
 app.get('/style.css', (req, res) => {
@@ -224,15 +239,33 @@ app.post('/api/auth/finalize', loginLimiter, async (req, res) => {
     }
 });
 
+app.post('/api/auth/logout', async (req, res) => {
+    res.clearCookie('auth_token', getCookieOptions(req));
+    try {
+        if (req.cookies.auth_token) {
+            await sessionTableReady;
+            await pool.query('DELETE FROM auth_sessions WHERE session_id = $1', [req.cookies.auth_token]);
+        }
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Logout failed:', error.message);
+        res.status(500).json({ error: 'Failed to end session' });
+    }
+});
+
 async function requireAuth(req, res, next) {
     const token = req.cookies.auth_token;
-    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    if (!token) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Unauthorized' });
 
     try {
         req.user = await getSessionUser(token);
         next();
     } catch (err) {
-        res.status(401).json({ error: 'Invalid or expired session' });
+        if (!isInvalidSession(err)) {
+            return res.status(500).json({ error: 'Authentication service unavailable' });
+        }
+        res.clearCookie('auth_token', getCookieOptions(req));
+        res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Invalid or expired session' });
     }
 }
 
@@ -244,13 +277,23 @@ async function getSessionUser(sessionId) {
          WHERE session_id = $1 AND expires_at > NOW()`,
         [sessionId]
     );
-    if (result.rowCount === 0) throw new Error('Invalid or expired session');
+    if (result.rowCount === 0) {
+        const error = new Error('Invalid or expired session');
+        error.code = 'INVALID_SESSION';
+        throw error;
+    }
 
     const session = result.rows[0];
-    return {
-        username: session.username,
-        dashApiKey: decryptApiKey(session.encrypted_api_key)
-    };
+    try {
+        return {
+            username: session.username,
+            dashApiKey: decryptApiKey(session.encrypted_api_key)
+        };
+    } catch (cause) {
+        const error = new Error('Invalid session data', { cause });
+        error.code = 'INVALID_SESSION';
+        throw error;
+    }
 }
 
 app.get('/api/me', requireAuth, (req, res) => {
@@ -262,6 +305,8 @@ app.get('/', async (req, res, next) => {
     try {
         await getSessionUser(req.cookies.auth_token);
     } catch (err) {
+        if (!isInvalidSession(err)) return next(err);
+        res.clearCookie('auth_token', getCookieOptions(req));
         return res.redirect('/setup.html');
     }
     next();
@@ -644,7 +689,7 @@ app.post('/api/players/:id/roles/:roleId', requireAuth, async (req, res) => {
 
         if (restrictedPerms.length > 0) {
             return res.status(403).json({ 
-                error: `Cannot assign role with restricted permissions: ${restrictedPerms.join(', ')}. Allowed: ${Array.from(ALLOWED_ROLE_PERMISSIONS).join(', ')}`
+                error: `These permissions aren't allowed to be given out: ${restrictedPerms.join(', ')}`
             });
         }
 

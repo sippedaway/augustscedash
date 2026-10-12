@@ -919,7 +919,8 @@ body.is-resizing-layout {
     color: var(--primary);
 }
 
-.online-shared-role-item {
+.online-shared-role-item,
+.online-player-role-item {
     display: inline-flex;
     align-items: center;
     gap: 0.15rem;

@@ -109,7 +109,7 @@
                 });
                 const data = await response.json().catch(() => ({}));
                 if (!response.ok) throw new Error(data.error || 'Uhm bad API key. Remake it or try again?');
-                window.location.href = '/';
+                window.location.replace('/');
             } catch (error) {
                 errorMessage.textContent = error.message || 'Uhm bad API key. Remake it or try again?';
             } finally {
