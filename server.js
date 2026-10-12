@@ -61,7 +61,8 @@ const ALLOWED_ROLE_PERMISSIONS = new Set([
     'user_warn',
     'user_ban_short:write',
     'fleet:read',
-    'user_mute'
+    'user_mute',
+    'vip:join'
 ]);
 const ALLOWED_EXACT_KEYS = [
     'config.player.enableThrusters',
